@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  transpilePackages: ['react-window', 'react-virtualized-auto-sizer'],
 };
 
 export default nextConfig;

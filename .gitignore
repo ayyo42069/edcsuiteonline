@@ -39,3 +39,12 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+extract_xdf.ps1
+edc15pecumanual.md
+edc15psoftwaremanual.md
+parsed_symbols_stage1 (HOTSTART).csv
+project-plan.md
+stage1 (HOTSTART).xdf
+xdf_addresses.csv
+testbin.xdf
+c#source/*

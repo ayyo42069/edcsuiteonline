@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1e3a5f"/>
+      <stop offset="50%" style="stop-color:#0d1b2a"/>
+      <stop offset="100%" style="stop-color:#1e3a5f"/>
+    </linearGradient>
+    <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#00d4ff"/>
+      <stop offset="50%" style="stop-color:#60efff"/>
+      <stop offset="100%" style="stop-color:#00d4ff"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="6" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- Background rounded square -->
+  <rect x="16" y="16" width="480" height="480" rx="80" ry="80" fill="url(#bgGrad)"/>
+  
+  <!-- Subtle circuit pattern -->
+  <g stroke="#1e4a6f" stroke-width="2" fill="none" opacity="0.4">
+    <path d="M60 256 L100 256 L115 241"/>
+    <path d="M452 256 L412 256 L397 271"/>
+    <path d="M256 70 L256 110"/>
+    <path d="M256 442 L256 402"/>
+    <circle cx="115" cy="241" r="3" fill="#1e4a6f"/>
+    <circle cx="397" cy="271" r="3" fill="#1e4a6f"/>
+  </g>
+  
+  <!-- Main "EDC" letters -->
+  <g filter="url(#glow)">
+    <!-- E shape -->
+    <path d="M70 160 L70 352 L160 352 L160 324 L106 324 L106 270 L145 270 L145 242 L106 242 L106 188 L160 188 L160 160 Z" 
+          fill="url(#accentGrad)"/>
+    
+    <!-- D shape -->
+    <path d="M180 160 L180 352 L240 352 C285 352 312 310 312 256 C312 202 285 160 240 160 Z M216 188 L232 188 C260 188 276 218 276 256 C276 294 260 324 232 324 L216 324 Z" 
+          fill="url(#accentGrad)"/>
+    
+    <!-- C shape -->
+    <path d="M395 160 L395 188 L380 188 C350 188 332 218 332 256 C332 294 350 324 380 324 L395 324 L395 352 L375 352 C320 352 295 310 295 256 C295 202 320 160 375 160 Z M395 160 L442 160 L442 188 L395 188 Z M395 324 L442 324 L442 352 L395 352 Z" 
+          fill="url(#accentGrad)"/>
+  </g>
+  
+  <!-- Decorative corner accents -->
+  <g stroke="url(#accentGrad)" stroke-width="3" fill="none" opacity="0.6">
+    <path d="M56 100 L56 56 L100 56"/>
+    <path d="M412 56 L456 56 L456 100"/>
+    <path d="M456 412 L456 456 L412 456"/>
+    <path d="M100 456 L56 456 L56 412"/>
+  </g>
+  
+  <!-- Small accent dots -->
+  <g fill="#00d4ff" opacity="0.8">
+    <circle cx="56" cy="56" r="4"/>
+    <circle cx="456" cy="56" r="4"/>
+    <circle cx="456" cy="456" r="4"/>
+    <circle cx="56" cy="456" r="4"/>
+  </g>
+</svg>
