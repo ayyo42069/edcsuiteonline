@@ -119,7 +119,7 @@ export default function Home() {
                 <header className="flex-shrink-0 p-4 border-b border-zinc-200 dark:border-zinc-700 flex justify-between items-center bg-white dark:bg-zinc-900">
                     <div className="flex items-center gap-4">
                         <h1 className="text-xl font-bold tracking-tight text-blue-600 dark:text-blue-400">
-                            EDC Suite <span className="text-sm font-normal text-zinc-500 ml-2">Beta v0.4</span>
+                            EDC Suite <span className="text-sm font-normal text-zinc-500 ml-2">Beta v0.5</span>
                         </h1>
 
                         {fileBuffer && (
@@ -278,7 +278,7 @@ export default function Home() {
                     {/* Hex View Mode */}
                     {viewMode === 'hex' && fileBuffer && (
                         <div className="h-full w-full overflow-hidden">
-                            <HexViewer data={new Uint8Array(fileBuffer)} />
+                            <HexViewer data={new Uint8Array(fileBuffer)} onSwitchToMapView={() => setViewMode('map')} />
                         </div>
                     )}
                 </main>
