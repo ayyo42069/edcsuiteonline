@@ -1,4 +1,4 @@
-import { SymbolHelper, CodeBlock, AxisHelper, GearboxType, MapSelector, EDCFileType, SymbolCollection } from '../types';
+﻿import { SymbolHelper, CodeBlock, AxisHelper, GearboxType, MapSelector, EDCFileType, SymbolCollection } from '../types';
 import { Tools } from '../tools';
 import { PartNumberConverter } from '../partNumberConverter';
 
@@ -514,7 +514,7 @@ export class EDC15PFileParser {
                             xAxisOffset: 0,
                             yAxisCorrection: 1,
                             yAxisOffset: 0,
-                            correction: 0.1,
+                            correction: 1,
                             offset: 0,
                             codeBlock: 0
                         };
@@ -571,7 +571,7 @@ export class EDC15PFileParser {
                             xAxisOffset: 0,
                             yAxisCorrection: 1,
                             yAxisOffset: 0,
-                            correction: 0.1,
+                            correction: 1,
                             offset: 0,
                             codeBlock: 0
                         };
@@ -635,13 +635,13 @@ export class EDC15PFileParser {
         for (const cb of currBlocks) {
             if (cb.startAddress <= address && cb.endAddress >= address) {
                 let desc = `Codeblock ${cb.codeID}`;
-                if (cb.blockGearboxType === GearboxType.Manual) desc += ", Manual";
-                else if (cb.blockGearboxType === GearboxType.Automatic) desc += ", Automatic";
+                if (cb.blockGearboxType === GearboxType.Automatic) desc += ", Automatic";
+                // Use codeblock ID for manual vs 4x4 (C# fallback logic)
+                else if (cb.codeID === 2) desc += ", Manual";
+                else if (cb.codeID === 3) desc += ", 4x4";
+                // Generic fallback
+                else if (cb.blockGearboxType === GearboxType.Manual) desc += ", Manual";
                 else if (cb.blockGearboxType === GearboxType.FourByFour) desc += ", 4x4";
-
-                // Fallback heuristic if type is unknown but ID is standard
-                else if (cb.codeID === 2) desc += ", Manual"; // Common
-                else if (cb.codeID === 3) desc += ", 4x4"; // Common
 
                 return desc;
             }
@@ -964,10 +964,12 @@ export class EDC15PFileParser {
                 sh.varname = `Start IQ (${startIQCount}) [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
                 sh.correction = 0.01;
                 sh.zAxisDescr = "Start IQ (mg)";
-                sh.xAxisDescr = "Coolant temperature";
+                sh.xAxisDescr = "Coolant temperature (°C)";
+                sh.xAxisCorrection = 0.1;
+                sh.xAxisOffset = -273.1;
+                sh.xaxisUnits = "degC";
                 sh.yAxisDescr = "Engine speed (rpm)";
                 sh.yaxisUnits = "rpm";
-                sh.xaxisUnits = "°C";
             }
 
             // ========== Length 128: Fuel volume correction, various ==========
@@ -979,9 +981,11 @@ export class EDC15PFileParser {
                         sh.varname = `Fuel volume correction map [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
                         sh.correction = 0.01;
                         sh.zAxisDescr = "Correction factor";
-                        sh.xAxisDescr = "Fuel temperature";
+                        sh.xAxisDescr = "Fuel temperature (°C)";
+                        sh.xAxisCorrection = 0.1;
+                        sh.xAxisOffset = -273.1;
+                        sh.xaxisUnits = "degC";
                         sh.yAxisDescr = "IQ (mg/stroke)";
-                        sh.xaxisUnits = "°C";
                         sh.yaxisUnits = "mg/st";
                     } else if (xAxisHighByte === 0xEC && yAxisHighByte === 0xC1) {
                         sh.category = "Detected maps";
@@ -989,35 +993,50 @@ export class EDC15PFileParser {
                         sh.varname = `MAF correction by temperature [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
                         sh.correction = 0.01;
                         sh.zAxisDescr = "Correction factor";
+                        sh.xAxisDescr = "Intake air temperature (°C)";
+                        sh.xAxisCorrection = 0.1;
+                        sh.xAxisOffset = -273.1;
+                        sh.xaxisUnits = "degC";
+                        sh.yAxisDescr = "Engine speed (rpm)";
+                        sh.yaxisUnits = "rpm";
                     }
                 }
             }
 
             // ========== Length 60: EGR temperature map ==========
             else if (sh.length === 60) {
-                if (sh.xAxisLength === 5 && sh.yAxisLength === 6) {
-                    sh.category = "Detected maps";
-                    sh.subcategory = "EGR";
-                    sh.varname = `EGR temperature map [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
-                    sh.zAxisDescr = "EGR position";
-                    sh.xAxisDescr = "Temperature";
-                    sh.yAxisDescr = "Engine speed (rpm)";
-                    sh.yaxisUnits = "rpm";
-                    sh.xaxisUnits = "°C";
+                // C# checks: sh.Y_axis_length == 6 && sh.X_axis_length == 5 && sh.Y_axis_ID == 0xC1A2
+                if (sh.yAxisLength === 6 && sh.xAxisLength === 5) {
+                    if (sh.yAxisID === 0xC1A2) {
+                        sh.category = "Detected maps";
+                        sh.subcategory = "EGR";
+                        sh.varname = `EGR temperature map [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
+                        sh.zAxisDescr = "Mass airflow correction";
+                        sh.xAxisDescr = "Temperature (°C)";
+                        sh.xAxisCorrection = 0.1;
+                        sh.xAxisOffset = -273.1;
+                        sh.xaxisUnits = "°C";
+                        sh.yAxisDescr = "Engine speed (rpm)";
+                        sh.yaxisUnits = "rpm";
+                    }
                 }
             }
 
             // ========== Length 20: Pre-glow map ==========
             else if (sh.length === 20) {
-                if (sh.xAxisLength === 2 && sh.yAxisLength === 5) {
+                // C# checks: sh.Y_axis_length == 5 && sh.X_axis_length == 2
+                if (sh.yAxisLength === 5 && sh.xAxisLength === 2) {
                     sh.category = "Detected maps";
                     sh.subcategory = "Misc";
                     sh.varname = `Pre-glow map [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
-                    sh.zAxisDescr = "Pre-glow time";
-                    sh.xAxisDescr = "Temperature";
-                    sh.yAxisDescr = "Battery voltage";
+                    sh.zAxisDescr = "Time (sec)";
+                    sh.correction = 0.01;
+                    sh.xAxisDescr = "Temperature (°C)";
+                    sh.xAxisCorrection = 0.1;
+                    sh.xAxisOffset = -273.1;
                     sh.xaxisUnits = "°C";
-                    sh.yaxisUnits = "V";
+                    sh.yAxisDescr = "Air pressure";
+                    sh.yaxisUnits = "mbar";
                 }
             }
 

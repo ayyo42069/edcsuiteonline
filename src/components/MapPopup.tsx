@@ -198,11 +198,24 @@ export const MapPopup: React.FC<MapPopupProps> = ({ symbol, fileBuffer, isOpen, 
         setSelectedCells(new Set());
     };
 
-    const formatValue = (val: number, factor: number, offset: number) => {
+    const formatValue = (val: number, factor: number, offset: number, units?: string) => {
         const f = factor !== undefined ? factor : 1;
         const o = offset !== undefined ? offset : 0;
         const real = val * f + o;
-        return parseFloat(real.toFixed(3)).toString();
+        const formatted = parseFloat(real.toFixed(3)).toString();
+
+        // Append unit symbol for axis values if units are provided
+        if (units) {
+            const unitLower = units.toLowerCase();
+            if (unitLower.includes('°c') || unitLower.includes('degc') || unitLower.includes('celcius') || unitLower.includes('celsius')) {
+                return `${formatted}°C`;
+            } else if (unitLower.includes('%') || unitLower.includes('percent')) {
+                return `${formatted}%`;
+            } else if (unitLower.includes('°') || unitLower.includes('deg') || unitLower.includes('btdc')) {
+                return `${formatted}°`;
+            }
+        }
+        return formatted;
     };
 
     const handleSave = () => {
@@ -276,7 +289,7 @@ export const MapPopup: React.FC<MapPopupProps> = ({ symbol, fileBuffer, isOpen, 
                     </div>
                 </div>
 
-                {/* Axis Info Bar */}
+                {/* Axis Info Bar - C# only swaps ADDRESSES, NOT descriptions/units/corrections. X display uses xAxis info, Y uses yAxis info */}
                 <div className="flex-shrink-0 px-6 py-3 bg-zinc-900/50 border-b border-zinc-800 flex gap-8 text-sm">
                     <div className="flex items-center gap-2">
                         <span className="px-2 py-0.5 rounded bg-blue-600/20 text-blue-400 font-semibold text-xs">X</span>
@@ -313,7 +326,7 @@ export const MapPopup: React.FC<MapPopupProps> = ({ symbol, fileBuffer, isOpen, 
                                 </th>
                                 {x.map((val, idx) => (
                                     <th key={`x-${idx}`} className="p-3 min-w-[70px] bg-zinc-900 border-b border-r border-zinc-700 text-blue-400 font-medium">
-                                        {formatValue(val, symbol.yAxisCorrection, symbol.yAxisOffset)}
+                                        {formatValue(val, symbol.xAxisCorrection, symbol.xAxisOffset, symbol.xaxisUnits)}
                                     </th>
                                 ))}
                             </tr>
@@ -322,7 +335,7 @@ export const MapPopup: React.FC<MapPopupProps> = ({ symbol, fileBuffer, isOpen, 
                             {y.map((yVal, yIdx) => (
                                 <tr key={`y-${yIdx}`} className="group">
                                     <th className="sticky left-0 z-10 p-3 bg-zinc-900 border-r border-b border-zinc-700 text-green-400 font-medium group-hover:bg-zinc-800 transition-colors">
-                                        {formatValue(yVal, symbol.xAxisCorrection, symbol.xAxisOffset)}
+                                        {formatValue(yVal, symbol.yAxisCorrection, symbol.yAxisOffset, symbol.yaxisUnits)}
                                     </th>
 
                                     {z[yIdx]?.map((zVal, xIdx) => {

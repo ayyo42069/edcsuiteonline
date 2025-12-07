@@ -202,11 +202,28 @@ export const MapTable: React.FC<MapTableProps> = ({ symbol, fileBuffer }) => {
         setSelectedCells(new Set());
     };
 
-    const formatValue = (val: number, factor: number, offset: number, isAxis: boolean = false) => {
+    const formatValue = (val: number, factor: number, offset: number, isAxis: boolean = false, units?: string) => {
         const f = factor !== undefined ? factor : 1;
         const o = offset !== undefined ? offset : 0;
         const real = val * f + o;
-        return parseFloat(real.toFixed(3)).toString();
+        const formatted = parseFloat(real.toFixed(3)).toString();
+
+        // Append unit symbol for axis values if units are provided
+        if (isAxis && units) {
+            // Extract short unit symbol
+            const unitLower = units.toLowerCase();
+            if (unitLower.includes('°c') || unitLower.includes('degc') || unitLower.includes('celcius') || unitLower.includes('celsius')) {
+                return `${formatted}°C`;
+            } else if (unitLower.includes('%') || unitLower.includes('percent')) {
+                return `${formatted}%`;
+            } else if (unitLower.includes('°') || unitLower.includes('deg') || unitLower.includes('btdc')) {
+                return `${formatted}°`;
+            } else if (units.trim() && !unitLower.includes('rpm') && !unitLower.includes('mbar') && !unitLower.includes('mg')) {
+                // For other units, just append the unit text if it's short
+                return formatted;
+            }
+        }
+        return formatted;
     };
 
     const handleSave = () => {
@@ -251,8 +268,9 @@ export const MapTable: React.FC<MapTableProps> = ({ symbol, fileBuffer }) => {
                     </div>
                 </div>
                 <div className="text-right text-zinc-500 text-[10px]">
-                    <div>X: {symbol.xAxisDescr} ({symbol.xaxisUnits})</div>
-                    <div>Y: {symbol.yAxisDescr} ({symbol.yaxisUnits})</div>
+                    {/* C# only swaps ADDRESSES, NOT descriptions/units/corrections. X display uses xAxis info, Y uses yAxis info */}
+                    <div>X: {symbol.xAxisDescr}{symbol.xaxisUnits && !symbol.xAxisDescr?.toLowerCase().includes(symbol.xaxisUnits.toLowerCase().replace(/[^a-z°%]/gi, '')) ? ` (${symbol.xaxisUnits})` : ''}</div>
+                    <div>Y: {symbol.yAxisDescr}{symbol.yaxisUnits && !symbol.yAxisDescr?.toLowerCase().includes(symbol.yaxisUnits.toLowerCase().replace(/[^a-z°%]/gi, '')) ? ` (${symbol.yaxisUnits})` : ''}</div>
                     <div>Z: {symbol.zAxisDescr || "Value"}</div>
                 </div>
             </div>
@@ -276,7 +294,7 @@ export const MapTable: React.FC<MapTableProps> = ({ symbol, fileBuffer }) => {
                             </th>
                             {x.map((val, idx) => (
                                 <th key={`x-${idx}`} className="p-2 min-w-[60px] bg-zinc-900 border-b border-r border-zinc-800 text-zinc-400 font-medium">
-                                    {formatValue(val, symbol.yAxisCorrection, symbol.yAxisOffset, true)}
+                                    {formatValue(val, symbol.xAxisCorrection, symbol.xAxisOffset, true, symbol.xaxisUnits)}
                                 </th>
                             ))}
                         </tr>
@@ -285,7 +303,7 @@ export const MapTable: React.FC<MapTableProps> = ({ symbol, fileBuffer }) => {
                         {y.map((yVal, yIdx) => (
                             <tr key={`y-${yIdx}`} className="group">
                                 <th className="sticky left-0 z-10 p-2 bg-zinc-900 border-r border-b border-zinc-800 text-zinc-400 font-medium group-hover:bg-zinc-800 transition-colors">
-                                    {formatValue(yVal, symbol.xAxisCorrection, symbol.xAxisOffset, true)}
+                                    {formatValue(yVal, symbol.yAxisCorrection, symbol.yAxisOffset, true, symbol.yaxisUnits)}
                                 </th>
 
                                 {z[yIdx]?.map((zVal, xIdx) => {

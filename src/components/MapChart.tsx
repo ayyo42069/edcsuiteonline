@@ -29,7 +29,8 @@ export const MapChart: React.FC<MapChartProps> = ({ symbol, fileBuffer }) => {
     const processedData = useMemo(() => {
         if (x.length === 0 || y.length === 0 || z.length === 0) return null;
 
-        // Apply factors/offsets
+        // Apply factors/offsets - C# only swaps ADDRESSES, NOT corrections
+        // X display uses xAxisCorrection/xAxisOffset (corrections are NOT swapped)
         const xReal = x.map(v => v * (symbol.xAxisCorrection || 1) + (symbol.xAxisOffset || 0));
         const zReal = z.map(row => row.map(v => v * (symbol.correction || 1) + (symbol.offset || 0)));
 

@@ -83,11 +83,17 @@ export const MapList: React.FC<MapListProps> = ({ isOpen, onToggle }) => {
             }
         });
 
-        // Sort by Address
-        const sortByAddr = (a: SymbolHelper, b: SymbolHelper) => a.flashStartAddress - b.flashStartAddress;
+        // Natural alphanumeric sort: "EGR 01" before "EGR 02", "IQ limiter 1" before "IQ limiter 10"
+        const naturalSort = (a: SymbolHelper, b: SymbolHelper) => {
+            const aName = a.varname || a.flashStartAddress.toString(16);
+            const bName = b.varname || b.flashStartAddress.toString(16);
 
-        Object.values(structure.detected).forEach(list => list.sort(sortByAddr));
-        structure.potential.sort(sortByAddr);
+            // Use localeCompare with numeric option for natural number sorting
+            return aName.localeCompare(bName, undefined, { numeric: true, sensitivity: 'base' });
+        };
+
+        Object.values(structure.detected).forEach(list => list.sort(naturalSort));
+        structure.potential.sort(naturalSort);
 
         return structure;
     }, [symbols, searchTerm]);
