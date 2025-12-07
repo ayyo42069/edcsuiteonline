@@ -19,6 +19,7 @@ export const MapTable: React.FC<MapTableProps> = ({ symbol, fileBuffer }) => {
     const updateMapData = useFileStore(state => state.updateMapData);
     const [editCell, setEditCell] = useState<EditState | null>(null);
     const inputRef = useRef<HTMLInputElement>(null);
+    const lastEditCellRef = useRef<{ xIndex: number; yIndex: number } | null>(null);
 
     const isPercentMap = useMemo(() => {
         return (symbol.zAxisDescr || "").includes("%") || (symbol.xaxisUnits || "").includes("Duty cycle");
@@ -46,10 +47,20 @@ export const MapTable: React.FC<MapTableProps> = ({ symbol, fileBuffer }) => {
         return { ...data, zMin: min, zMax: max };
     }, [fileBuffer, symbol]);
 
+    // Only focus/select when starting to edit a NEW cell, not on value changes
     useEffect(() => {
         if (editCell && inputRef.current) {
-            inputRef.current.focus();
-            inputRef.current.select();
+            const isNewCell = !lastEditCellRef.current ||
+                lastEditCellRef.current.xIndex !== editCell.xIndex ||
+                lastEditCellRef.current.yIndex !== editCell.yIndex;
+
+            if (isNewCell) {
+                inputRef.current.focus();
+                inputRef.current.select();
+                lastEditCellRef.current = { xIndex: editCell.xIndex, yIndex: editCell.yIndex };
+            }
+        } else if (!editCell) {
+            lastEditCellRef.current = null;
         }
     }, [editCell]);
 

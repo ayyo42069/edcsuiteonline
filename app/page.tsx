@@ -30,6 +30,7 @@ export default function Home() {
     const [viewMode, setViewMode] = useState<ViewMode>('map');
     const [isChecksumModalOpen, setIsChecksumModalOpen] = useState(false);
     const [isMenuOpen, setIsMenuOpen] = useState(false);
+    const [isMapListOpen, setIsMapListOpen] = useState(true);
     const [launchControlMessage, setLaunchControlMessage] = useState<string | null>(null);
     const menuRef = useRef<HTMLDivElement>(null);
 
@@ -43,6 +44,13 @@ export default function Home() {
         document.addEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
+
+    // Automatically open sidebar when file is loaded
+    useEffect(() => {
+        if (fileBuffer) {
+            setIsMapListOpen(true);
+        }
+    }, [fileBuffer]);
 
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -101,15 +109,17 @@ export default function Home() {
 
     return (
         <div className="flex h-screen bg-zinc-50 dark:bg-zinc-900 text-zinc-900 dark:text-zinc-100 overflow-hidden font-sans">
-            {/* Sidebar - Only show in Map mode */}
-            {viewMode === 'map' && <MapList />}
+            {/* Sidebar - Only show in Map mode when file is loaded */}
+            {viewMode === 'map' && fileBuffer && (
+                <MapList isOpen={isMapListOpen} onToggle={() => setIsMapListOpen(!isMapListOpen)} />
+            )}
 
             <div className="flex-1 flex flex-col overflow-hidden">
                 {/* Header */}
                 <header className="flex-shrink-0 p-4 border-b border-zinc-200 dark:border-zinc-700 flex justify-between items-center bg-white dark:bg-zinc-900">
                     <div className="flex items-center gap-4">
                         <h1 className="text-xl font-bold tracking-tight text-blue-600 dark:text-blue-400">
-                            EDC Suite <span className="text-sm font-normal text-zinc-500 ml-2">Beta v0.1</span>
+                            EDC Suite <span className="text-sm font-normal text-zinc-500 ml-2">Beta v0.2</span>
                         </h1>
 
                         {fileBuffer && (

@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "EDC Suite - VAG ECU Tuning Tool | Beta v0.1",
+  title: "EDC Suite - VAG ECU Tuning Tool | Beta",
   description: "Free online EDC15P/EDC16 map editor and tuning suite for VAG diesel ECUs. Parse, edit, and tune ECU maps with launch control, checksum correction, and more.",
   keywords: "EDC15P, EDC16, VAG tuning, ECU editor, map editor, diesel tuning, launch control, checksum, free tuning tool",
   authors: [{ name: "EDC Suite" }],

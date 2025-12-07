@@ -163,13 +163,18 @@ export const useFileStore = create<FileState>((set, get) => ({
         if (!fileBuffer) return;
 
         const data = new Uint8Array(fileBuffer);
+
+        // Display dimensions match readMapData:
+        //   - displayRows = symbol.xAxisLength (Y axis rows in display)
+        //   - displayCols = symbol.yAxisLength (X axis columns in display)
+        const displayCols = symbol.yAxisLength;
         const totalElements = symbol.xAxisLength * symbol.yAxisLength;
         const elementSize = Math.floor(symbol.length / totalElements);
-        const actualElementSize = (elementSize === 1 || elementSize === 2) ? elementSize : 1;
+        const actualElementSize = (elementSize === 1 || elementSize === 2) ? elementSize : 2;
 
-        // Calculate offset
-        // Z data is stored row by row
-        const flatIndex = yIndex * symbol.xAxisLength + xIndex;
+        // Calculate offset - data is stored row by row
+        // flatIndex = row * columns + column = yIndex * displayCols + xIndex
+        const flatIndex = yIndex * displayCols + xIndex;
         const offset = symbol.flashStartAddress + (flatIndex * actualElementSize);
 
         // Apply inverse correction to get raw value
@@ -189,19 +194,12 @@ export const useFileStore = create<FileState>((set, get) => ({
             if (rawValue < 0) rawValue = 0;
             if (rawValue > 65535) rawValue = 65535;
 
-            // Write 16-bit (Little Endian? LoHi)
-            // EDC15 is LoHi for maps usually
+            // Write 16-bit (Little Endian / LoHi)
             data[offset] = rawValue & 0xFF;
             data[offset + 1] = (rawValue >> 8) & 0xFF;
         }
 
-        // We need to trigger a re-render. 
-        // Since we mutated the buffer in place (which is technically against immutable patterns but efficient for large buffers),
-        // we can just shallow clone the buffer reference or force update.
-        // However, components relying on 'fileBuffer' prop might not see it if reference doesn't change.
-        // Let's clone the buffer to be safe and correct for React.
-        // For 512KB, cloning is fast enough.
-
+        // Clone the buffer to trigger React update
         set({ fileBuffer: data.buffer.slice(0), checksumStatus: "Modified (Unverified)" });
     },
 
