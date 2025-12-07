@@ -28,6 +28,12 @@ interface FileState {
     reset: () => void;
     selectSymbol: (symbol: SymbolHelper | null) => void;
     updateMapData: (symbol: SymbolHelper, xIndex: number, yIndex: number, newValue: number) => void;
+    updateMapDataBatch: (
+        symbol: SymbolHelper,
+        cells: Array<{ x: number, y: number }>,
+        operation: 'set' | 'add' | 'multiply' | 'addPercent',
+        value: number
+    ) => void;
     verifyChecksums: () => void;
     addLaunchControlSymbols: (modifiedBuffer: ArrayBuffer, locations: number[]) => void;
 }
@@ -200,6 +206,76 @@ export const useFileStore = create<FileState>((set, get) => ({
         }
 
         // Clone the buffer to trigger React update
+        set({ fileBuffer: data.buffer.slice(0), checksumStatus: "Modified (Unverified)" });
+    },
+
+    updateMapDataBatch: (symbol, cells, operation, value) => {
+        const { fileBuffer } = get();
+        if (!fileBuffer || cells.length === 0) return;
+
+        const data = new Uint8Array(fileBuffer);
+        const displayCols = symbol.yAxisLength;
+        const totalElements = symbol.xAxisLength * symbol.yAxisLength;
+        const elementSize = Math.floor(symbol.length / totalElements);
+        const actualElementSize = (elementSize === 1 || elementSize === 2) ? elementSize : 2;
+
+        const factor = symbol.correction || 1;
+        const offsetVal = symbol.offset || 0;
+
+        // Helper to read current value
+        const readValue = (x: number, y: number): number => {
+            const flatIndex = y * displayCols + x;
+            const offset = symbol.flashStartAddress + (flatIndex * actualElementSize);
+            let raw = 0;
+            if (actualElementSize === 2) {
+                raw = data[offset] | (data[offset + 1] << 8);
+            } else {
+                raw = data[offset];
+            }
+            return raw * factor + offsetVal;
+        };
+
+        // Helper to write value
+        const writeValue = (x: number, y: number, newDisplayValue: number) => {
+            const flatIndex = y * displayCols + x;
+            const offset = symbol.flashStartAddress + (flatIndex * actualElementSize);
+            let rawValue = Math.round((newDisplayValue - offsetVal) / factor);
+
+            if (actualElementSize === 1) {
+                rawValue = Math.max(0, Math.min(255, rawValue));
+                data[offset] = rawValue;
+            } else {
+                rawValue = Math.max(0, Math.min(65535, rawValue));
+                data[offset] = rawValue & 0xFF;
+                data[offset + 1] = (rawValue >> 8) & 0xFF;
+            }
+        };
+
+        // Apply operation to each cell
+        for (const cell of cells) {
+            const currentValue = readValue(cell.x, cell.y);
+            let newValue: number;
+
+            switch (operation) {
+                case 'set':
+                    newValue = value;
+                    break;
+                case 'add':
+                    newValue = currentValue + value;
+                    break;
+                case 'multiply':
+                    newValue = currentValue * value;
+                    break;
+                case 'addPercent':
+                    newValue = currentValue * (1 + value / 100);
+                    break;
+                default:
+                    newValue = currentValue;
+            }
+
+            writeValue(cell.x, cell.y, newValue);
+        }
+
         set({ fileBuffer: data.buffer.slice(0), checksumStatus: "Modified (Unverified)" });
     },
 

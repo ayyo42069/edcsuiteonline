@@ -1,11 +1,12 @@
 "use client";
 
-import React, { useMemo, useState, useEffect, useRef } from 'react';
+import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { SymbolHelper } from '../core/types';
 import { Tools } from '../core/tools';
 import { useFileStore } from '../store/useFileStore';
 import { getColorForValue, getTextColorForBackground } from '../utils/colorUtils';
 import { X, Maximize2, Minimize2 } from 'lucide-react';
+import { SelectionToolbar } from './SelectionToolbar';
 
 interface MapPopupProps {
     symbol: SymbolHelper;
@@ -20,13 +21,24 @@ interface EditState {
     value: string;
 }
 
+interface CellCoord {
+    x: number;
+    y: number;
+}
+
 export const MapPopup: React.FC<MapPopupProps> = ({ symbol, fileBuffer, isOpen, onClose }) => {
     const updateMapData = useFileStore(state => state.updateMapData);
+    const updateMapDataBatch = useFileStore(state => state.updateMapDataBatch);
+
     const [editCell, setEditCell] = useState<EditState | null>(null);
+    const [selectedCells, setSelectedCells] = useState<Set<string>>(new Set());
+    const [selectionAnchor, setSelectionAnchor] = useState<CellCoord | null>(null);
+    const [isDragging, setIsDragging] = useState(false);
     const [isFullscreen, setIsFullscreen] = useState(false);
+
     const inputRef = useRef<HTMLInputElement>(null);
     const modalRef = useRef<HTMLDivElement>(null);
-    const lastEditCellRef = useRef<{ xIndex: number; yIndex: number } | null>(null);
+    const lastEditCellRef = useRef<CellCoord | null>(null);
 
     const isPercentMap = useMemo(() => {
         return (symbol.zAxisDescr || "").includes("%") || (symbol.xaxisUnits || "").includes("Duty cycle");
@@ -53,48 +65,144 @@ export const MapPopup: React.FC<MapPopupProps> = ({ symbol, fileBuffer, isOpen, 
         return { ...data, zMin: min, zMax: max };
     }, [fileBuffer, symbol]);
 
-    // Only focus/select when starting to edit a NEW cell, not on value changes
+    // Focus input when editing starts
     useEffect(() => {
         if (editCell && inputRef.current) {
             const isNewCell = !lastEditCellRef.current ||
-                lastEditCellRef.current.xIndex !== editCell.xIndex ||
-                lastEditCellRef.current.yIndex !== editCell.yIndex;
+                lastEditCellRef.current.x !== editCell.xIndex ||
+                lastEditCellRef.current.y !== editCell.yIndex;
 
             if (isNewCell) {
                 inputRef.current.focus();
                 inputRef.current.select();
-                lastEditCellRef.current = { xIndex: editCell.xIndex, yIndex: editCell.yIndex };
+                lastEditCellRef.current = { x: editCell.xIndex, y: editCell.yIndex };
             }
         } else if (!editCell) {
             lastEditCellRef.current = null;
         }
     }, [editCell]);
 
-    // Close on Escape key
+    // Close on Escape, handle other keyboard shortcuts
     useEffect(() => {
-        const handleEscape = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') onClose();
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (!isOpen) return;
+
+            if (e.key === 'Escape') {
+                if (selectedCells.size > 0) {
+                    setSelectedCells(new Set());
+                    setSelectionAnchor(null);
+                } else if (editCell) {
+                    setEditCell(null);
+                } else {
+                    onClose();
+                }
+            }
+
+            if (e.ctrlKey && e.key === 'a' && !editCell) {
+                e.preventDefault();
+                const allCells = new Set<string>();
+                for (let yi = 0; yi < y.length; yi++) {
+                    for (let xi = 0; xi < x.length; xi++) {
+                        allCells.add(`${xi},${yi}`);
+                    }
+                }
+                setSelectedCells(allCells);
+            }
         };
+
         if (isOpen) {
-            document.addEventListener('keydown', handleEscape);
+            document.addEventListener('keydown', handleKeyDown);
             document.body.style.overflow = 'hidden';
         }
         return () => {
-            document.removeEventListener('keydown', handleEscape);
+            document.removeEventListener('keydown', handleKeyDown);
             document.body.style.overflow = '';
         };
-    }, [isOpen, onClose]);
+    }, [isOpen, onClose, selectedCells.size, editCell, x.length, y.length]);
+
+    // Mouse up handler for drag selection
+    useEffect(() => {
+        const handleMouseUp = () => setIsDragging(false);
+        window.addEventListener('mouseup', handleMouseUp);
+        return () => window.removeEventListener('mouseup', handleMouseUp);
+    }, []);
+
+    const cellKey = (x: number, y: number) => `${x},${y}`;
+    const parseKey = (key: string): CellCoord => {
+        const [x, y] = key.split(',').map(Number);
+        return { x, y };
+    };
+
+    const getSelectedCellsArray = useCallback((): CellCoord[] => {
+        return Array.from(selectedCells).map(parseKey);
+    }, [selectedCells]);
+
+    const getCellsInRange = (start: CellCoord, end: CellCoord): Set<string> => {
+        const cells = new Set<string>();
+        const minX = Math.min(start.x, end.x);
+        const maxX = Math.max(start.x, end.x);
+        const minY = Math.min(start.y, end.y);
+        const maxY = Math.max(start.y, end.y);
+
+        for (let yi = minY; yi <= maxY; yi++) {
+            for (let xi = minX; xi <= maxX; xi++) {
+                cells.add(cellKey(xi, yi));
+            }
+        }
+        return cells;
+    };
+
+    const handleCellMouseDown = (xIdx: number, yIdx: number, e: React.MouseEvent) => {
+        e.preventDefault();
+        const key = cellKey(xIdx, yIdx);
+
+        if (e.ctrlKey || e.metaKey) {
+            const newSelection = new Set(selectedCells);
+            if (newSelection.has(key)) {
+                newSelection.delete(key);
+            } else {
+                newSelection.add(key);
+            }
+            setSelectedCells(newSelection);
+            setSelectionAnchor({ x: xIdx, y: yIdx });
+        } else if (e.shiftKey && selectionAnchor) {
+            const range = getCellsInRange(selectionAnchor, { x: xIdx, y: yIdx });
+            setSelectedCells(range);
+        } else {
+            if (selectedCells.size <= 1 && !selectedCells.has(key)) {
+                setSelectedCells(new Set([key]));
+                setSelectionAnchor({ x: xIdx, y: yIdx });
+                setIsDragging(true);
+            } else if (selectedCells.has(key) && selectedCells.size === 1) {
+                const rawValue = z[yIdx]?.[xIdx] ?? 0;
+                const formatted = formatValue(rawValue, symbol.correction, symbol.offset);
+                setEditCell({ xIndex: xIdx, yIndex: yIdx, value: formatted });
+            } else {
+                setSelectedCells(new Set([key]));
+                setSelectionAnchor({ x: xIdx, y: yIdx });
+                setIsDragging(true);
+            }
+        }
+    };
+
+    const handleCellMouseEnter = (xIdx: number, yIdx: number) => {
+        if (isDragging && selectionAnchor) {
+            const range = getCellsInRange(selectionAnchor, { x: xIdx, y: yIdx });
+            setSelectedCells(range);
+        }
+    };
+
+    const handleCellDoubleClick = (xIdx: number, yIdx: number, rawValue: number) => {
+        const formatted = formatValue(rawValue, symbol.correction, symbol.offset);
+        setEditCell({ xIndex: xIdx, yIndex: yIdx, value: formatted });
+        setSelectedCells(new Set());
+    };
 
     const formatValue = (val: number, factor: number, offset: number) => {
         const f = factor !== undefined ? factor : 1;
         const o = offset !== undefined ? offset : 0;
         const real = val * f + o;
         return parseFloat(real.toFixed(3)).toString();
-    };
-
-    const handleCellClick = (xIndex: number, yIndex: number, rawValue: number) => {
-        const formatted = formatValue(rawValue, symbol.correction, symbol.offset);
-        setEditCell({ xIndex, yIndex, value: formatted });
     };
 
     const handleSave = () => {
@@ -111,7 +219,20 @@ export const MapPopup: React.FC<MapPopupProps> = ({ symbol, fileBuffer, isOpen, 
         else if (e.key === 'Escape') setEditCell(null);
     };
 
+    const handleBatchApply = (operation: 'set' | 'add' | 'multiply' | 'addPercent', value: number) => {
+        const cells = getSelectedCellsArray();
+        if (cells.length === 0) return;
+        updateMapDataBatch(symbol, cells, operation, value);
+    };
+
+    const handleClearSelection = () => {
+        setSelectedCells(new Set());
+        setSelectionAnchor(null);
+    };
+
     if (!isOpen) return null;
+
+    const hasSelection = selectedCells.size > 0 && !editCell;
 
     return (
         <div
@@ -173,6 +294,15 @@ export const MapPopup: React.FC<MapPopupProps> = ({ symbol, fileBuffer, isOpen, 
                     </div>
                 </div>
 
+                {/* Selection Toolbar */}
+                {hasSelection && (
+                    <SelectionToolbar
+                        selectedCount={selectedCells.size}
+                        onApply={handleBatchApply}
+                        onClear={handleClearSelection}
+                    />
+                )}
+
                 {/* Data Grid */}
                 <div className="flex-1 overflow-auto p-4 custom-scrollbar">
                     <table className="w-max border-separate border-spacing-0 text-sm font-mono">
@@ -197,6 +327,7 @@ export const MapPopup: React.FC<MapPopupProps> = ({ symbol, fileBuffer, isOpen, 
 
                                     {z[yIdx]?.map((zVal, xIdx) => {
                                         const isEditing = editCell?.xIndex === xIdx && editCell?.yIndex === yIdx;
+                                        const isSelected = selectedCells.has(cellKey(xIdx, yIdx));
                                         const realVal = zVal * (symbol.correction || 1) + (symbol.offset || 0);
 
                                         const rangeMin = isPercentMap ? 0 : zMin;
@@ -213,11 +344,14 @@ export const MapPopup: React.FC<MapPopupProps> = ({ symbol, fileBuffer, isOpen, 
                                                     color: !isEditing ? textColor : undefined
                                                 }}
                                                 className={`
-                                                    p-0 border-r border-b border-zinc-800/50 min-w-[70px] relative
+                                                    p-0 border-r border-b min-w-[70px] relative select-none
                                                     ${!isEditing ? 'cursor-pointer transition-all hover:scale-105 hover:z-10 hover:shadow-lg' : ''}
                                                     ${isEditing ? 'bg-zinc-800' : ''}
+                                                    ${isSelected && !isEditing ? 'ring-2 ring-blue-500 ring-inset z-10' : 'border-zinc-800/50'}
                                                 `}
-                                                onClick={() => !isEditing && handleCellClick(xIdx, yIdx, zVal)}
+                                                onMouseDown={(e) => handleCellMouseDown(xIdx, yIdx, e)}
+                                                onMouseEnter={() => handleCellMouseEnter(xIdx, yIdx)}
+                                                onDoubleClick={() => handleCellDoubleClick(xIdx, yIdx, zVal)}
                                             >
                                                 {isEditing ? (
                                                     <input
@@ -247,7 +381,9 @@ export const MapPopup: React.FC<MapPopupProps> = ({ symbol, fileBuffer, isOpen, 
 
                 {/* Footer */}
                 <div className="flex-shrink-0 px-6 py-3 bg-zinc-900 border-t border-zinc-800 rounded-b-xl flex justify-between items-center text-sm text-zinc-500">
-                    <span>Click any cell to edit • Press <kbd className="px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 text-xs">Enter</kbd> to save • <kbd className="px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 text-xs">Esc</kbd> to close</span>
+                    <span>
+                        Click to select • Shift+click for range • Ctrl+click to toggle • Drag to select area • Double-click to edit
+                    </span>
                     <span>Factor: {symbol.correction} | Offset: {symbol.offset}</span>
                 </div>
             </div>
