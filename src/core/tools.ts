@@ -21,7 +21,7 @@ export class Tools {
         // Read X Axis for display (from Y_axis in symbol - C# swap!)
         if (symbol.yAxisAddress > 0) {
             for (let i = 0; i < symbol.yAxisLength; i++) {
-                xValues.push(Tools.readUint16(data, symbol.yAxisAddress + (i * 2)));
+                xValues.push(Tools.signedFromRaw16(Tools.readUint16(data, symbol.yAxisAddress + (i * 2))));
             }
         } else {
             for (let i = 0; i < symbol.yAxisLength; i++) xValues.push(i);
@@ -30,38 +30,27 @@ export class Tools {
         // Read Y Axis for display (from X_axis in symbol - C# swap!)
         if (symbol.xAxisAddress > 0) {
             for (let i = 0; i < symbol.xAxisLength; i++) {
-                yValues.push(Tools.readUint16(data, symbol.xAxisAddress + (i * 2)));
+                yValues.push(Tools.signedFromRaw16(Tools.readUint16(data, symbol.xAxisAddress + (i * 2))));
             }
         } else {
             for (let i = 0; i < symbol.xAxisLength; i++) yValues.push(i);
         }
 
-        // Read Z Data (Map Content)
-        // Display dimensions: 
-        //   - X axis (columns) = symbol.yAxisLength (swapped)
-        //   - Y axis (rows) = symbol.xAxisLength (swapped)
         const displayRows = symbol.xAxisLength;  // Y axis rows in display
         const displayCols = symbol.yAxisLength;  // X axis columns in display
         const totalElements = displayRows * displayCols;
-
-        // Avoid division by zero
         if (totalElements === 0) return { x: [], y: [], z: [] };
 
         const elementSize = Math.floor(symbol.length / totalElements);
-        // Default to 2 bytes (16-bit) for EDC15 maps
         const actualElementSize = (elementSize === 1 || elementSize === 2) ? elementSize : 2;
 
         let offset = symbol.flashStartAddress;
-
-        // Read rows (Y axis / xAxisLength in storage)
         for (let y = 0; y < displayRows; y++) {
             const row: number[] = [];
-            // Read cols (X axis / yAxisLength in storage)
             for (let x = 0; x < displayCols; x++) {
                 let val = 0;
-
                 if (actualElementSize === 2) {
-                    val = Tools.readUint16(data, offset);
+                    val = Tools.signedFromRaw16(Tools.readUint16(data, offset));
                 } else {
                     val = data[offset];
                 }
@@ -72,6 +61,21 @@ export class Tools {
         }
 
         return { x: xValues, y: yValues, z: zValues };
+    }
+
+    // Matches C# MapViewerEx convention: raw uint16 values above 0xF000 are interpreted
+    // as small signed negatives (-4095..-1). Used for axis values and Z cells.
+    static signedFromRaw16(raw: number): number {
+        return raw > 0xF000 ? raw - 0x10000 : raw;
+    }
+
+    // Inverse of signedFromRaw16, clamped to a valid uint16 storage slot.
+    static rawFromSigned16(signed: number): number {
+        let v = Math.round(signed);
+        if (v < 0) v = 0x10000 + v;
+        if (v < 0) v = 0;
+        if (v > 0xFFFF) v = 0xFFFF;
+        return v;
     }
 
     /**

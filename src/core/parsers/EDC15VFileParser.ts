@@ -107,14 +107,18 @@ export class EDC15VFileParser {
         } catch { /* ignore */ }
     }
 
+    // Matches C# EDC15VFileParser.cs isAxisID exactly.
     private isAxisID(id: number): boolean {
-        const idstrip = Math.floor(id / 256);
+        const idstrip = (id >>> 8) & 0xFF;
         if (idstrip === 0xDB) return true;
-        if ([0xC0, 0xC1, 0xC2, 0xC3, 0xC4, 0xC5].includes(idstrip)) return true;
-        if ([0xE0, 0xE4, 0xE5, 0xE9, 0xEA, 0xEB, 0xEC].includes(idstrip)) return true;
-        if ([0xDA, 0xDC, 0xDD, 0xDE].includes(idstrip)) return true;
-        if ([0xF9, 0xFE, 0xFC].includes(idstrip)) return true;
-        if ([0xD5, 0xD7, 0xD9, 0xE6].includes(idstrip)) return true;
+        if (idstrip === 0xC0 || idstrip === 0xC1 || idstrip === 0xC2 || idstrip === 0xC4 || idstrip === 0xC5) return true;
+        if (idstrip === 0xE0 || idstrip === 0xE4 || idstrip === 0xE5 || idstrip === 0xE7 || idstrip === 0xE9 || idstrip === 0xEA || idstrip === 0xEB || idstrip === 0xEC || idstrip === 0xEF) return true;
+        if (idstrip === 0xDA || idstrip === 0xDC || idstrip === 0xDD || idstrip === 0xDE) return true;
+        if (idstrip === 0xF9 || idstrip === 0xFE) return true;
+        if (idstrip === 0xD7 || idstrip === 0xE6) return true;
+        if (idstrip === 0xD5) return true;
+        if (idstrip === 0xD9 || idstrip === 0xE8) return true;
+        if (idstrip === 0xC3 || idstrip === 0xD0) return true;
         return false;
     }
 
@@ -136,19 +140,83 @@ export class EDC15VFileParser {
                     const yaxislen = Tools.readUint16(allBytes, t + 6 + (xaxislen * 2), true);
 
                     if (this.isAxisID(yaxisid) && this.isValidLength(yaxislen, yaxisid)) {
+                        const dataSize = xaxislen * yaxislen * 2;
+                        const xAxisAddr = t + 4;
+                        const yAxisAddr = t + 8 + (xaxislen * 2);
+                        let mapDataAddress = t + 8 + (xaxislen * 2) + (yaxislen * 2);
+
+                        // Optional Z-axis (3D stack with selector).
+                        let zaxislen = 0;
+                        let zaxisaddress = 0;
+                        if (mapDataAddress + 4 <= allBytes.length) {
+                            const zid = Tools.readUint16(allBytes, mapDataAddress, true);
+                            if (this.isAxisID(zid)) {
+                                const zlen = Tools.readUint16(allBytes, mapDataAddress + 2, true);
+                                if (this.isValidLength(zlen, zid)) {
+                                    zaxislen = zlen;
+                                    zaxisaddress = mapDataAddress + 4;
+                                    let zBump = 4 + (zaxislen * 2);
+                                    if (zBump < 16) zBump = 16;
+                                    mapDataAddress += zBump;
+                                    len2Skip += (xaxislen * 2) + (yaxislen * 2) + zaxislen * 2;
+                                }
+                            }
+                        }
+
                         const newSymbol = this.createSymbolHelper();
                         newSymbol.xAxisLength = xaxislen;
                         newSymbol.yAxisLength = yaxislen;
                         newSymbol.xAxisID = xaxisid;
                         newSymbol.yAxisID = yaxisid;
-                        newSymbol.xAxisAddress = t + 4;
-                        newSymbol.yAxisAddress = t + 8 + (xaxislen * 2);
-                        newSymbol.length = xaxislen * yaxislen * 2;
-                        newSymbol.flashStartAddress = t + 8 + (xaxislen * 2) + (yaxislen * 2);
-                        newSymbol.varname = `3D ${newSymbol.flashStartAddress.toString(16).toUpperCase().padStart(8, '0')}`;
+                        newSymbol.xAxisAddress = xAxisAddr;
+                        newSymbol.yAxisAddress = yAxisAddr;
+                        newSymbol.length = dataSize;
+                        newSymbol.flashStartAddress = mapDataAddress;
+                        newSymbol.varname = `3D ${mapDataAddress.toString(16).toUpperCase().padStart(8, '0')}`;
                         newSymbol.is3D = true;
-                        retval = this.addToSymbolCollection(newSymbols, newSymbol, newCodeBlocks);
-                        if (retval) len2Skip += (xaxislen * 2) + (yaxislen * 2) + newSymbol.length;
+
+                        if (zaxislen > 1 && zaxisaddress > 0) {
+                            const nextMapAddr = this.findNextMap(allBytes, mapDataAddress + dataSize, dataSize * 10);
+                            if (nextMapAddr > 0 && ((nextMapAddr - mapDataAddress) % dataSize) === 0) {
+                                const ms: MapSelector = {
+                                    numRepeats: zaxislen,
+                                    startAddress: zaxisaddress,
+                                    mapLength: dataSize,
+                                    xAxisAddress: xAxisAddr,
+                                    yAxisAddress: yAxisAddr,
+                                    xAxisID: xaxisid,
+                                    yAxisID: yaxisid,
+                                    xAxisLen: xaxislen,
+                                    yAxisLen: yaxislen,
+                                    mapData: [],
+                                    mapIndexes: []
+                                };
+                                for (let ia = 0; ia < zaxislen; ia++) {
+                                    ms.mapData.push(Tools.readUint16(allBytes, zaxisaddress + ia * 2, true));
+                                }
+                                for (let ia = 0; ia < zaxislen; ia++) {
+                                    ms.mapIndexes.push(Tools.readUint16(allBytes, zaxisaddress + (zaxislen * 2) + ia * 2, true));
+                                }
+                                for (let r = 0; r < zaxislen; r++) {
+                                    const layerAddr = mapDataAddress + r * dataSize;
+                                    if (r > 0 && !(ms.mapIndexes[r] > 0)) continue;
+                                    const layer = this.createSymbolHelper();
+                                    Object.assign(layer, newSymbol);
+                                    layer.flashStartAddress = layerAddr;
+                                    layer.varname = `3D ${layerAddr.toString(16).toUpperCase().padStart(8, '0')}`;
+                                    layer.mapSelector = ms;
+                                    if (this.addToSymbolCollection(newSymbols, layer, newCodeBlocks)) {
+                                        retval = true;
+                                    }
+                                }
+                                len2Skip += zaxislen * dataSize;
+                            }
+                        }
+
+                        if (this.addToSymbolCollection(newSymbols, newSymbol, newCodeBlocks)) {
+                            retval = true;
+                            len2Skip += (xaxislen * 2) + (yaxislen * 2) + dataSize;
+                        }
                     } else {
                         const newSymbol = this.createSymbolHelper();
                         newSymbol.xAxisLength = xaxislen;
@@ -166,6 +234,18 @@ export class EDC15VFileParser {
         }
         setLen2Skip(len2Skip);
         return retval;
+    }
+
+    private findNextMap(allBytes: Uint8Array, index: number, maxBytesToSearch: number): number {
+        const end = Math.min(allBytes.length - 4, index + maxBytesToSearch);
+        for (let i = index; i < end; i += 2) {
+            const xid = Tools.readUint16(allBytes, i, true);
+            if (this.isAxisID(xid)) {
+                const xlen = Tools.readUint16(allBytes, i + 2, true);
+                if (this.isValidLength(xlen, xid)) return i;
+            }
+        }
+        return 0;
     }
 
     private createSymbolHelper(): SymbolHelper {
@@ -218,16 +298,223 @@ export class EDC15VFileParser {
         return count + 1;
     }
 
-    // Comprehensive map detection based on C# EDC15VFileParser
+    // --- Helpers ported from C# EDC15VFileParser ---
+    private getMaxAxisValue(allBytes: Uint8Array, sh: SymbolHelper, which: 'X' | 'Y'): number {
+        const addr = which === 'X' ? sh.xAxisAddress : sh.yAxisAddress;
+        const len  = which === 'X' ? sh.xAxisLength  : sh.yAxisLength;
+        let max = 0;
+        for (let i = 0; i < len; i++) {
+            const v = Tools.readUint16(allBytes, addr + i * 2, true);
+            if (v > max) max = v;
+        }
+        return max;
+    }
+
+    private isValidTemperatureAxis(allBytes: Uint8Array, sh: SymbolHelper, which: 'X' | 'Y'): boolean {
+        const addr = which === 'X' ? sh.xAxisAddress : sh.yAxisAddress;
+        const len  = which === 'X' ? sh.xAxisLength  : sh.yAxisLength;
+        for (let i = 0; i < len; i++) {
+            const v = Tools.readUint16(allBytes, addr + i * 2, true);
+            const t = v * 0.1 - 273.1;
+            if (t < -80 || t > 200) return false;
+        }
+        return true;
+    }
+
+    private mapSelectorIndexEmpty(sh: SymbolHelper): boolean {
+        if (!sh.mapSelector?.mapIndexes) return true;
+        for (const v of sh.mapSelector.mapIndexes) if (v !== 0) return false;
+        return true;
+    }
+
+    private getTemperatureSOIRange(ms: MapSelector | undefined, index: number): number {
+        if (!ms?.mapData || ms.mapData.length <= index) return index;
+        return Math.round(ms.mapData[index] * 0.1 - 273.1);
+    }
+
+    private applyPumpVoltage(sh: SymbolHelper, newSymbols: SymbolCollection, newCodeBlocks: CodeBlock[], counted = false): void {
+        sh.category = "Detected maps";
+        sh.subcategory = "Fuel";
+        if (counted) {
+            const cnt = this.getMapNameCountForCodeBlock("N146 Pump voltage map", sh.codeBlock, newSymbols);
+            sh.varname = `N146 Pump voltage map (${cnt}) [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
+        } else {
+            sh.varname = `N146 Pump voltage map [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
+        }
+        sh.correction = 1.221001;
+        sh.xAxisCorrection = 0.01;
+        sh.zAxisDescr = "Pump voltage (mV)";
+        sh.xAxisDescr = "IQ (mg/stroke)";
+        sh.yAxisDescr = "Engine speed (rpm)";
+        sh.yaxisUnits = "rpm";
+        sh.xaxisUnits = "mg/st";
+    }
+
+    private applyInverseDriverWish(sh: SymbolHelper, newCodeBlocks: CodeBlock[]): void {
+        sh.category = "Detected maps";
+        sh.subcategory = "Misc";
+        sh.varname = `Inverse driver wish [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
+        sh.correction = 0.01;
+        sh.xAxisCorrection = 0.01;
+        sh.zAxisDescr = "Throttle position";
+        sh.xAxisDescr = "IQ (mg/stroke)";
+        sh.yAxisDescr = "Engine speed (rpm)";
+        sh.yaxisUnits = "rpm";
+        sh.xaxisUnits = "mg/st";
+    }
+
+    private applySmokeLimiterV(sh: SymbolHelper, newSymbols: SymbolCollection, newCodeBlocks: CodeBlock[], altName?: string): void {
+        sh.category = "Detected maps";
+        sh.subcategory = "Limiters";
+        const base = altName ?? "Smoke limiter";
+        sh.varname = `${base} [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
+        if (sh.mapSelector?.mapIndexes && sh.mapSelector.mapIndexes.length > 1 && !this.mapSelectorIndexEmpty(sh)) {
+            const smokeCount = this.getMapNameCountForCodeBlock(base, sh.codeBlock, newSymbols) - 1;
+            const t = this.getTemperatureSOIRange(sh.mapSelector, smokeCount);
+            sh.varname = `Smoke limiter ${t} °C [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
+        }
+        sh.zAxisDescr = "Maximum IQ (mg)";
+        sh.yAxisDescr = "Engine speed (rpm)";
+        sh.xAxisDescr = "Airflow mg/stroke";
+        sh.correction = 0.01;
+        sh.xAxisCorrection = 0.1;
+        sh.yaxisUnits = "rpm";
+        sh.xaxisUnits = "mg/st";
+    }
+
+    private applyN75DCV(sh: SymbolHelper, newCodeBlocks: CodeBlock[]): void {
+        sh.category = "Detected maps";
+        sh.subcategory = "Turbo";
+        sh.varname = `N75 duty cycle [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
+        sh.zAxisDescr = "Duty cycle %";
+        sh.correction = -0.01;
+        sh.offset = 100;
+        sh.xAxisCorrection = 0.01;
+        sh.xAxisDescr = "IQ (mg/stroke)";
+        sh.yAxisDescr = "Engine speed (rpm)";
+        sh.yaxisUnits = "rpm";
+        sh.xaxisUnits = "mg/st";
+    }
+
+    private applyEGRV(sh: SymbolHelper, newSymbols: SymbolCollection, newCodeBlocks: CodeBlock[]): void {
+        sh.category = "Detected maps";
+        sh.subcategory = "Misc";
+        const cnt = this.getMapNameCountForCodeBlock("EGR", sh.codeBlock, newSymbols);
+        sh.varname = `EGR ${String(cnt).padStart(2, '0')} [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
+        sh.correction = 0.1;
+        sh.xAxisCorrection = 0.01;
+        sh.zAxisDescr = "Mass Air Flow (mg/stroke)";
+        sh.xAxisDescr = "IQ (mg/stroke)";
+        sh.yAxisDescr = "Engine speed (rpm)";
+        sh.yaxisUnits = "rpm";
+        sh.xaxisUnits = "mg/st";
+    }
+
+    private applySOIN108V(sh: SymbolHelper, newSymbols: SymbolCollection, newCodeBlocks: CodeBlock[]): void {
+        sh.category = "Detected maps";
+        sh.subcategory = "Fuel";
+        const cnt = this.getMapNameCountForCodeBlock("Start of injection (N108 SOI)", sh.codeBlock, newSymbols);
+        sh.varname = `Start of injection (N108 SOI) ${cnt} [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
+        sh.yAxisDescr = "Engine speed (rpm)";
+        sh.yaxisUnits = "rpm";
+        sh.xAxisCorrection = 0.01;
+        sh.xaxisUnits = "mg/st";
+        sh.xAxisDescr = "IQ (mg/stroke)";
+        sh.correction = this.SOICorrection;
+        sh.zAxisDescr = "Start position (degrees BTDC)";
+    }
+
+    private applyBoostTargetV(sh: SymbolHelper, newSymbols: SymbolCollection, newCodeBlocks: CodeBlock[]): void {
+        sh.category = "Detected maps";
+        sh.subcategory = "Turbo";
+        const cnt = this.getMapNameCountForCodeBlock("Boost target map", sh.codeBlock, newSymbols);
+        sh.varname = `Boost target map (${cnt}) [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
+        sh.xAxisCorrection = 0.01;
+        sh.xAxisDescr = "IQ (mg/stroke)";
+        sh.yAxisDescr = "Engine speed (rpm)";
+        sh.zAxisDescr = "Boost target (mbar)";
+        sh.yaxisUnits = "rpm";
+        sh.xaxisUnits = "mg/st";
+    }
+
+    private applyDriverWishV(sh: SymbolHelper, newCodeBlocks: CodeBlock[]): void {
+        sh.category = "Detected maps";
+        sh.subcategory = "Misc";
+        sh.varname = `Driver wish [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
+        sh.correction = 0.01;
+        sh.xAxisCorrection = 0.01;
+        sh.xAxisDescr = "Throttle position";
+        sh.zAxisDescr = "Requested IQ (mg)";
+        sh.yAxisDescr = "Engine speed (rpm)";
+        sh.yaxisUnits = "rpm";
+        sh.xaxisUnits = "TPS %";
+    }
+
+    private applyBoostLimitV(sh: SymbolHelper, newCodeBlocks: CodeBlock[]): void {
+        sh.category = "Detected maps";
+        sh.subcategory = "Limiters";
+        sh.varname = `Boost limit map [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
+        sh.yAxisDescr = "Atmospheric pressure (mbar)";
+        sh.zAxisDescr = "Maximum boost pressure (mbar)";
+        sh.xAxisDescr = "Engine speed (rpm)";
+        sh.xaxisUnits = "rpm";
+        sh.yaxisUnits = "mbar";
+    }
+
+    private applyTorqueLimiterV(sh: SymbolHelper, newCodeBlocks: CodeBlock[]): void {
+        sh.category = "Detected maps";
+        sh.subcategory = "Limiters";
+        sh.varname = `Torque limiter [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
+        sh.zAxisDescr = "Maximum IQ (mg)";
+        sh.yAxisDescr = "Atm. pressure (mbar)";
+        sh.xAxisDescr = "Engine speed (rpm)";
+        sh.correction = 0.01;
+        sh.xaxisUnits = "rpm";
+        sh.yaxisUnits = "mbar";
+    }
+
+    private applyStartIQV(sh: SymbolHelper, newSymbols: SymbolCollection, newCodeBlocks: CodeBlock[]): void {
+        sh.category = "Detected maps";
+        sh.subcategory = "Fuel";
+        const cnt = this.getMapNameCountForCodeBlock("Start IQ", sh.codeBlock, newSymbols);
+        sh.varname = `Start IQ (${cnt}) [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
+        sh.correction = 0.01;
+        sh.xAxisDescr = "CT (celcius)";
+        sh.xAxisCorrection = 0.1;
+        sh.xAxisOffset = -273.1;
+        sh.zAxisDescr = "Requested IQ (mg)";
+        sh.yAxisDescr = "Engine speed (rpm)";
+        sh.yaxisUnits = "rpm";
+        sh.xaxisUnits = "degC";
+    }
+
+    private applyMAFCorrTemp(sh: SymbolHelper, newSymbols: SymbolCollection, newCodeBlocks: CodeBlock[]): void {
+        sh.category = "Detected maps";
+        sh.subcategory = "Limiters";
+        const cnt = this.getMapNameCountForCodeBlock("MAF correction by temperature", sh.codeBlock, newSymbols) - 1;
+        sh.varname = `MAF correction by temperature ${String(cnt).padStart(2, '0')} [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
+        sh.zAxisDescr = "Limit";
+        sh.yAxisDescr = "Engine speed (rpm)";
+        sh.xAxisDescr = "Intake air temperature";
+        sh.xAxisCorrection = 0.1;
+        sh.xAxisOffset = -273.1;
+        sh.correction = 0.01;
+        sh.yaxisUnits = "rpm";
+        sh.xaxisUnits = "°C";
+    }
+
+    // Comprehensive map detection ported from C# EDC15VFileParser.NameKnownMaps.
     private nameKnownMaps(allBytes: Uint8Array, newSymbols: SymbolCollection, newCodeBlocks: CodeBlock[]): void {
         for (const sh of newSymbols) {
-            const xHi = Math.floor(sh.xAxisID / 256);
-            const yHi = Math.floor(sh.yAxisID / 256);
+            const xHi = (sh.xAxisID >>> 8) & 0xFF;
+            const yHi = (sh.yAxisID >>> 8) & 0xFF;
+            const xId = sh.xAxisID;
+            const yId = sh.yAxisID;
 
-            // Launch control (700 = 25*14)
+            // ========== Length 700 (25x14): Launch control ==========
             if (sh.length === 700) {
                 sh.category = "Detected maps";
-                sh.subcategory = "Launch Control";
+                sh.subcategory = "Misc";
                 sh.varname = `Launch control map [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
                 sh.yAxisCorrection = 0.156250;
                 sh.correction = 0.01;
@@ -238,217 +525,315 @@ export class EDC15VFileParser {
                 sh.xaxisUnits = "rpm";
             }
 
-            // Pump voltage maps (544, 512, 480, 448)
-            else if (sh.length === 544 && sh.xAxisLength === 16 && sh.yAxisLength === 17) {
+            // ========== Length 544 (16x17): N146 Pump voltage ==========
+            if (sh.length === 544 && sh.xAxisLength === 16 && sh.yAxisLength === 17) {
                 if ((xHi === 0xE0 && yHi === 0xC2) || (xHi === 0xDD && yHi === 0xC0)) {
-                    sh.category = "Detected maps";
-                    sh.subcategory = "Fuel";
-                    sh.varname = `N146 Pump voltage map [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
-                    sh.correction = 1.221001;
-                    sh.xAxisCorrection = 0.01;
-                    sh.zAxisDescr = "Pump voltage (mV)";
-                    sh.xAxisDescr = "IQ (mg/stroke)";
-                    sh.yAxisDescr = "Engine speed (rpm)";
-                    sh.yaxisUnits = "rpm";
-                    sh.xaxisUnits = "mg/st";
+                    this.applyPumpVoltage(sh, newSymbols, newCodeBlocks);
                 }
             }
 
-            // Length 416 - Smoke limiter, N75, EGR, SOI
-            else if (sh.length === 416 && sh.xAxisLength === 16 && sh.yAxisLength === 13) {
-                if (xHi === 0xF9 && (yHi === 0xDB || yHi === 0xDA)) {
-                    sh.category = "Detected maps";
-                    sh.subcategory = "Limiters";
-                    sh.varname = `Smoke limiter [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
-                    sh.zAxisDescr = "Maximum IQ (mg)";
-                    sh.yAxisDescr = "Engine speed (rpm)";
-                    sh.xAxisDescr = "Airflow mg/stroke";
-                    sh.correction = 0.01;
-                    sh.xAxisCorrection = 0.1;
-                    sh.yaxisUnits = "rpm";
-                    sh.xaxisUnits = "mg/st";
-                }
-                else if (xHi === 0xDC && yHi === 0xEA) {
-                    sh.category = "Detected maps";
-                    sh.subcategory = "Turbo";
-                    sh.varname = `N75 duty cycle [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
-                    sh.zAxisDescr = "Duty cycle %";
-                    sh.correction = -0.01;
-                    sh.offset = 100;
-                    sh.xAxisCorrection = 0.01;
-                    sh.xAxisDescr = "IQ (mg/stroke)";
-                    sh.yAxisDescr = "Engine speed (rpm)";
-                    sh.yaxisUnits = "rpm";
-                    sh.xaxisUnits = "mg/st";
-                }
-                else if (xHi === 0xE0 && (yHi === 0xDE || yHi === 0xDD)) {
+            // ========== Length 512 (16x16, DD/C0): N146 Pump voltage ==========
+            if (sh.length === 512 && sh.xAxisLength === 16 && sh.yAxisLength === 16 && xHi === 0xDD && yHi === 0xC0) {
+                this.applyPumpVoltage(sh, newSymbols, newCodeBlocks);
+            }
+
+            // ========== Length 480 (16x15): N146 Pump voltage / Inverse driver wish ==========
+            if (sh.length === 480 && sh.xAxisLength === 16 && sh.yAxisLength === 15) {
+                if (xId === 0xDD7C && yId === 0xC064) this.applyPumpVoltage(sh, newSymbols, newCodeBlocks);
+                else if (xId === 0xDDDC && yId === 0xC07C) this.applyPumpVoltage(sh, newSymbols, newCodeBlocks);
+                else if (xId === 0xDD52 && yId === 0xC080) this.applyPumpVoltage(sh, newSymbols, newCodeBlocks);
+                else if (xHi === 0xE0 && yHi === 0xC2) this.applyPumpVoltage(sh, newSymbols, newCodeBlocks);
+                else if (xHi === 0xEB && yHi === 0xC0) this.applyPumpVoltage(sh, newSymbols, newCodeBlocks);
+                else if (xHi === 0xDD && yId === 0xC044) this.applyInverseDriverWish(sh, newCodeBlocks);
+            }
+
+            // ========== Length 468 (13x18, DC/C0): Inverse driver wish ==========
+            else if (sh.length === 468 && sh.xAxisLength === 13 && sh.yAxisLength === 18 && xHi === 0xDC && yHi === 0xC0) {
+                this.applyInverseDriverWish(sh, newCodeBlocks);
+            }
+
+            // ========== Length 448: SOI (10 reps via map selector) or N146 Pump voltage ==========
+            else if (sh.length === 448) {
+                if (sh.mapSelector?.numRepeats === 10) {
                     sh.category = "Detected maps";
                     sh.subcategory = "Fuel";
-                    const cnt = this.getMapNameCountForCodeBlock("Start of injection (N108 SOI)", sh.codeBlock, newSymbols);
-                    sh.varname = `Start of injection (N108 SOI) ${cnt} [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
+                    const cnt = this.getMapNameCountForCodeBlock("Start of injection (SOI)", sh.codeBlock, newSymbols) - 1;
+                    const t = this.getTemperatureSOIRange(sh.mapSelector, cnt);
+                    sh.varname = `Start of injection (SOI) ${t} °C [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
+                    sh.correction = 0.023437;
                     sh.yAxisDescr = "Engine speed (rpm)";
                     sh.yaxisUnits = "rpm";
                     sh.xAxisCorrection = 0.01;
                     sh.xaxisUnits = "mg/st";
                     sh.xAxisDescr = "IQ (mg/stroke)";
-                    sh.correction = this.SOICorrection;
                     sh.zAxisDescr = "Start position (degrees BTDC)";
+                } else if (xHi === 0xDD && yHi === 0xC0) {
+                    this.applyPumpVoltage(sh, newSymbols, newCodeBlocks, true);
+                } else if (xHi === 0xE0 && yHi === 0xC2) {
+                    this.applyPumpVoltage(sh, newSymbols, newCodeBlocks, true);
                 }
             }
 
-            // EGR maps (392, 384, 364, 338)
-            else if (sh.length === 392 && sh.xAxisLength === 14 && sh.yAxisLength === 14) {
-                if (xHi === 0xDC && yHi === 0xC0) {
-                    sh.category = "Detected maps";
-                    sh.subcategory = "EGR";
-                    const cnt = this.getMapNameCountForCodeBlock("EGR", sh.codeBlock, newSymbols);
-                    sh.varname = `EGR ${String(cnt).padStart(2, '0')} [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
-                    sh.correction = 0.1;
-                    sh.xAxisCorrection = 0.01;
-                    sh.zAxisDescr = "Mass Air Flow (mg/stroke)";
-                    sh.xAxisDescr = "IQ (mg/stroke)";
-                    sh.yAxisDescr = "Engine speed (rpm)";
-                    sh.yaxisUnits = "rpm";
-                    sh.xaxisUnits = "mg/st";
+            // ========== Length 416 (16x13): Smoke / N75 / SOI / EGR ==========
+            else if (sh.length === 416 && sh.xAxisLength === 0x10 && sh.yAxisLength === 0x0D) {
+                if (xHi === 0xF9 && (yHi === 0xDB || yHi === 0xDA)) {
+                    this.applySmokeLimiterV(sh, newSymbols, newCodeBlocks);
+                } else if (xId === 0xDC64 && yId === 0xDA2A) {
+                    this.applyN75DCV(sh, newCodeBlocks);
+                } else if (xHi === 0xDC && yHi === 0xDA) {
+                    this.applySmokeLimiterV(sh, newSymbols, newCodeBlocks, "Smoke limiter II");
+                } else if (xId === 0xDDDC && yId === 0xDA52) {
+                    this.applyN75DCV(sh, newCodeBlocks);
+                } else if (xId === 0xDD50 && yId === 0xEA44) {
+                    this.applyN75DCV(sh, newCodeBlocks);
+                } else if (xId === 0xEBDA && yId === 0xEA5A) {
+                    this.applyN75DCV(sh, newCodeBlocks);
+                } else if (xId === 0xE08A && yId === 0xDDD8) {
+                    this.applyN75DCV(sh, newCodeBlocks);
+                } else if (xId === 0xDD7A && yId === 0xD9B6) {
+                    this.applyN75DCV(sh, newCodeBlocks);
+                } else if (xHi === 0xDC && yHi === 0xEA) {
+                    this.applyN75DCV(sh, newCodeBlocks);
+                } else if (xId === 0xDD7C && yId === 0xD9B6) {
+                    this.applyN75DCV(sh, newCodeBlocks);
+                } else if ((xId & 0xFFF0) === 0xDD50 && yId === 0xC01E) {
+                    this.applyEGRV(sh, newSymbols, newCodeBlocks);
+                } else if (xId === 0xDD50 && yId === 0xC024) {
+                    this.applyEGRV(sh, newSymbols, newCodeBlocks);
+                } else if (xId === 0xEBDA && yId === 0xC048) {
+                    this.applyEGRV(sh, newSymbols, newCodeBlocks);
+                } else if (xId === 0xDD7C && yId === 0xD904) {
+                    this.applyEGRV(sh, newSymbols, newCodeBlocks);
+                } else if (xId === 0xDC64 && yId === 0xD908) {
+                    this.applyEGRV(sh, newSymbols, newCodeBlocks);
+                } else if (xId === 0xDD7A && yId === 0xD904) {
+                    this.applyEGRV(sh, newSymbols, newCodeBlocks);
+                } else if (xId === 0xDDDC && yId === 0xD908) {
+                    this.applyEGRV(sh, newSymbols, newCodeBlocks);
+                } else if (xHi === 0xE0 && yId === 0xDE00) {
+                    this.applyEGRV(sh, newSymbols, newCodeBlocks);
+                } else if (xId === 0xE08A && yId === 0xDD30) {
+                    this.applyEGRV(sh, newSymbols, newCodeBlocks);
+                } else if (xHi === 0xE0 && yHi === 0xDE) {
+                    this.applySOIN108V(sh, newSymbols, newCodeBlocks);
+                } else if (xHi === 0xE0 && yHi === 0xDD) {
+                    this.applySOIN108V(sh, newSymbols, newCodeBlocks);
+                } else if (xHi === 0xDD && yHi === 0xDC) {
+                    this.applySOIN108V(sh, newSymbols, newCodeBlocks);
                 }
             }
 
-            // Inverse driver wish (384)
-            else if (sh.length === 384 && sh.xAxisLength === 12 && sh.yAxisLength === 16) {
-                if ((xHi === 0xDD && yHi === 0xC0) || (xHi === 0xE0 && (yHi === 0xC1 || yHi === 0xC2))) {
-                    sh.category = "Detected maps";
-                    sh.subcategory = "Misc";
-                    sh.varname = `Inverse driver wish [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
-                    sh.correction = 0.01;
-                    sh.xAxisCorrection = 0.01;
-                    sh.zAxisDescr = "Throttle position";
-                    sh.xAxisDescr = "IQ (mg/stroke)";
-                    sh.yAxisDescr = "Engine speed (rpm)";
-                    sh.yaxisUnits = "rpm";
-                    sh.xaxisUnits = "mg/st";
+            // ========== Length 392 (14x14, DC/C0): EGR ==========
+            if (sh.length === 392 && sh.xAxisLength === 14 && sh.yAxisLength === 14 && xHi === 0xDC && yHi === 0xC0) {
+                this.applyEGRV(sh, newSymbols, newCodeBlocks);
+            }
+
+            // ========== Length 384: Inverse driver wish / Smoke / EGR ==========
+            if (sh.length === 384) {
+                if (sh.xAxisLength === 12 && sh.yAxisLength === 16) {
+                    if (xHi === 0xDD && yHi === 0xC0) this.applyInverseDriverWish(sh, newCodeBlocks);
+                    else if (xHi === 0xE0 && yHi === 0xC1) this.applyInverseDriverWish(sh, newCodeBlocks);
+                    else if (xHi === 0xE0 && yHi === 0xC2) this.applyInverseDriverWish(sh, newCodeBlocks);
+                    else if (xId === 0xEBDA && yId === 0xC04A) this.applyInverseDriverWish(sh, newCodeBlocks);
                 }
-                else if (xHi === 0xE0 && yHi === 0xDC) {
+                if (sh.xAxisLength === 16 && sh.yAxisLength === 12) {
+                    if (xHi === 0xE0 && yHi === 0xDC) this.applySmokeLimiterV(sh, newSymbols, newCodeBlocks);
+                    else if (xHi === 0xDD && yHi === 0xDA) this.applySmokeLimiterV(sh, newSymbols, newCodeBlocks);
+                    else if (xHi === 0xDC && yHi === 0xD9) this.applyEGRV(sh, newSymbols, newCodeBlocks);
+                    else if (xHi === 0xDD && yHi === 0xD9) this.applyEGRV(sh, newSymbols, newCodeBlocks);
+                }
+            }
+
+            // ========== Length 364 (14x13): EGR ==========
+            if (sh.length === 364 && sh.xAxisLength === 14 && sh.yAxisLength === 13) {
+                if (xHi === 0xDC && yHi === 0xC0) this.applyEGRV(sh, newSymbols, newCodeBlocks);
+                if (xHi === 0xDC && yHi === 0xD9) this.applyEGRV(sh, newSymbols, newCodeBlocks);
+            }
+
+            // ========== Length 338 (13x13, DC/D9): EGR ==========
+            if (sh.length === 338 && sh.xAxisLength === 13 && sh.yAxisLength === 13 && xHi === 0xDC && yHi === 0xD9) {
+                this.applyEGRV(sh, newSymbols, newCodeBlocks);
+            }
+
+            // ========== Length 320 (16x10): Boost target / Driver wish / Smoke / Boost correction ==========
+            if (sh.length === 320) {
+                if (xHi === 0xDD && yHi === 0xC0) this.applyBoostTargetV(sh, newSymbols, newCodeBlocks);
+                else if (xHi === 0xDC && yId === 0xC0BA) this.applyDriverWishV(sh, newCodeBlocks);
+                else if (xHi === 0xDC && (yId & 0xFFF0) === 0xC030) this.applyBoostTargetV(sh, newSymbols, newCodeBlocks);
+                else if (xHi === 0xE0 && yHi === 0xC3) this.applyBoostTargetV(sh, newSymbols, newCodeBlocks);
+                else if (xId === 0xEBDA && yId === 0xC03A) this.applyBoostTargetV(sh, newSymbols, newCodeBlocks);
+                else if (xHi === 0xDD && yHi === 0xDA) this.applySmokeLimiterV(sh, newSymbols, newCodeBlocks);
+                else if (xHi === 0xE0 && yHi === 0xDC) this.applySmokeLimiterV(sh, newSymbols, newCodeBlocks);
+                else if (xId === 0xEBDA && yId === 0xDA70) this.applySmokeLimiterV(sh, newSymbols, newCodeBlocks);
+                else if (xHi === 0xDA && yHi === 0xDA) {
                     sh.category = "Detected maps";
                     sh.subcategory = "Limiters";
-                    sh.varname = `Smoke limiter [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
-                    sh.zAxisDescr = "Maximum IQ (mg)";
-                    sh.yAxisDescr = "Engine speed (rpm)";
-                    sh.xAxisDescr = "Airflow mg/stroke";
-                    sh.correction = 0.01;
+                    sh.varname = `Boost correction by temperature [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
+                    sh.xAxisDescr = "IAT (celcius)";
                     sh.xAxisCorrection = 0.1;
-                    sh.yaxisUnits = "rpm";
-                    sh.xaxisUnits = "mg/st";
+                    sh.xAxisOffset = -273.1;
+                    sh.yAxisDescr = "Requested boost";
+                    sh.zAxisDescr = "Boost limit (mbar)";
+                    sh.yaxisUnits = "mbar";
+                    sh.xaxisUnits = "degC";
                 }
             }
 
-            // Boost target (320 = 16*10)
-            else if (sh.length === 320) {
-                if ((xHi === 0xDD && yHi === 0xC0) || (xHi === 0xE0 && yHi === 0xC3) || (xHi === 0xDC && (sh.yAxisID & 0xFFF0) === 0xC030)) {
-                    sh.category = "Detected maps";
-                    sh.subcategory = "Turbo";
-                    const cnt = this.getMapNameCountForCodeBlock("Boost target map", sh.codeBlock, newSymbols);
-                    sh.varname = `Boost target map (${cnt}) [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
-                    sh.xAxisCorrection = 0.01;
-                    sh.xAxisDescr = "IQ (mg/stroke)";
-                    sh.yAxisDescr = "Engine speed (rpm)";
-                    sh.zAxisDescr = "Boost target (mbar)";
-                    sh.yaxisUnits = "rpm";
-                    sh.xaxisUnits = "mg/st";
-                }
-                else if (xHi === 0xDC && sh.yAxisID === 0xC0BA) {
-                    sh.category = "Detected maps";
-                    sh.subcategory = "Misc";
-                    sh.varname = `Driver wish [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
-                    sh.correction = 0.01;
-                    sh.xAxisCorrection = 0.01;
-                    sh.xAxisDescr = "Throttle position";
-                    sh.zAxisDescr = "Requested IQ (mg)";
-                    sh.yAxisDescr = "Engine speed (rpm)";
-                    sh.yaxisUnits = "rpm";
-                    sh.xaxisUnits = "TPS %";
-                }
+            // ========== Length 312 (13x12, DC/D7): SOI (N108) ==========
+            if (sh.length === 312 && sh.xAxisLength === 13 && sh.yAxisLength === 12 && xHi === 0xDC && yHi === 0xD7) {
+                this.applySOIN108V(sh, newSymbols, newCodeBlocks);
             }
 
-            // Driver wish (256, 288, 192, 208, 182)
-            else if (sh.length === 256 || sh.length === 288 || sh.length === 192) {
-                if ((xHi === 0xDD && yHi === 0xC0) || (xHi === 0xEB && yHi === 0xC0) || (xHi === 0xE0 && (yHi === 0xC1 || yHi === 0xC2))) {
-                    sh.category = "Detected maps";
-                    sh.subcategory = "Misc";
-                    sh.varname = `Driver wish [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
-                    sh.correction = 0.01;
-                    sh.xAxisCorrection = 0.01;
-                    sh.xAxisDescr = "Throttle position";
-                    sh.zAxisDescr = "Requested IQ (mg)";
-                    sh.yAxisDescr = "Engine speed (rpm)";
-                    sh.yaxisUnits = "rpm";
-                    sh.xaxisUnits = "TPS %";
-                }
+            // ========== Length 256: Driver wish (DD/C0 or EB/C0) ==========
+            else if (sh.length === 256) {
+                if (xHi === 0xDD && yHi === 0xC0) this.applyDriverWishV(sh, newCodeBlocks);
+                if (xHi === 0xEB && yHi === 0xC0) this.applyDriverWishV(sh, newCodeBlocks);
             }
 
-            else if (sh.length === 208 && sh.xAxisLength === 13 && sh.yAxisLength === 8) {
-                if (xHi === 0xDC && yHi === 0xC0) {
-                    sh.category = "Detected maps";
-                    sh.subcategory = "Misc";
-                    sh.varname = `Driver wish [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
-                    sh.correction = 0.01;
-                    sh.xAxisCorrection = 0.01;
-                    sh.xAxisDescr = "Throttle position";
-                    sh.zAxisDescr = "Requested IQ (mg)";
-                    sh.yAxisDescr = "Engine speed (rpm)";
-                    sh.yaxisUnits = "rpm";
-                    sh.xaxisUnits = "TPS %";
-                }
+            // ========== Length 288 (16x9): Driver wish ==========
+            else if (sh.length === 288 && sh.xAxisLength === 16 && sh.yAxisLength === 9) {
+                this.applyDriverWishV(sh, newCodeBlocks);
             }
 
+            // ========== Length 208 (13x8, DC/C0): Driver wish ==========
+            else if (sh.length === 208 && sh.xAxisLength === 13 && sh.yAxisLength === 8 && xHi === 0xDC && yHi === 0xC0) {
+                this.applyDriverWishV(sh, newCodeBlocks);
+            }
+
+            // ========== Length 200: Boost limit map (4 variants) ==========
+            else if (sh.length === 200) {
+                if (xHi === 0xC0 && yHi === 0xDD) this.applyBoostLimitV(sh, newCodeBlocks);
+                else if (xHi === 0xC0 && yHi === 0xDC) this.applyBoostLimitV(sh, newCodeBlocks);
+                else if ((xId & 0xFFF0) === 0xC2B0 && yId === 0xE08A) this.applyBoostLimitV(sh, newCodeBlocks);
+                else if (xId === 0xC034 && yId === 0xEBDA) this.applyBoostLimitV(sh, newCodeBlocks);
+            }
+
+            // ========== Length 192 (8x12): Driver wish ==========
+            else if (sh.length === 192) {
+                if (xHi === 0xE0 && yHi === 0xC1) this.applyDriverWishV(sh, newCodeBlocks);
+                if (xHi === 0xE0 && yHi === 0xC2) this.applyDriverWishV(sh, newCodeBlocks);
+                if (xHi === 0xDD && yHi === 0xC0) this.applyDriverWishV(sh, newCodeBlocks);
+                if (xId === 0xEBDA && yHi === 0xC0) this.applyDriverWishV(sh, newCodeBlocks);
+            }
+
+            // ========== Length 182 (7x13): Driver wish or SOI limiter ==========
             else if (sh.length === 182) {
-                if (xHi === 0xDC && yHi === 0xC0) {
-                    sh.category = "Detected maps";
-                    sh.subcategory = "Misc";
-                    sh.varname = `Driver wish [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
-                    sh.correction = 0.01;
-                    sh.xAxisCorrection = 0.01;
-                    sh.xAxisDescr = "Throttle position";
-                    sh.zAxisDescr = "Requested IQ (mg)";
-                    sh.yAxisDescr = "Engine speed (rpm)";
-                    sh.yaxisUnits = "rpm";
-                    sh.xaxisUnits = "TPS %";
-                }
+                if (xHi === 0xDC && yHi === 0xC0) this.applyDriverWishV(sh, newCodeBlocks);
                 else if (xHi === 0xDD && yHi === 0xC3) {
                     sh.category = "Detected maps";
                     sh.subcategory = "Limiters";
                     sh.varname = `SOI limiter (temperature) [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
-                    sh.correction = this.SOICorrection;
+                    sh.correction = 0.023437;
                     sh.yAxisDescr = "Engine speed (rpm)";
                     sh.xAxisDescr = "Temperature";
-                    sh.zAxisDescr = "Start position (degrees BTDC)";
-                }
-            }
-
-            // Boost limit (200)
-            else if (sh.length === 200) {
-                if ((yHi === 0xDD || yHi === 0xDC) && xHi === 0xC0) {
-                    sh.category = "Detected maps";
-                    sh.subcategory = "Limiters";
-                    sh.varname = `Boost limit map [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
-                    sh.yAxisDescr = "Atmospheric pressure (mbar)";
-                    sh.zAxisDescr = "Maximum boost pressure (mbar)";
-                    sh.xAxisDescr = "Engine speed (rpm)";
-                    sh.xaxisUnits = "rpm";
-                    sh.yaxisUnits = "mbar";
-                }
-            }
-
-            // Torque limiter (126, 84, 40)
-            else if (sh.length === 126 || sh.length === 84 || sh.length === 40) {
-                if (xHi === 0xE0 || xHi === 0xDA || xHi === 0xDC || xHi === 0xDD) {
-                    sh.category = "Detected maps";
-                    sh.subcategory = "Limiters";
-                    const cnt = this.getMapNameCountForCodeBlock("Torque limiter", sh.codeBlock, newSymbols);
-                    sh.varname = `Torque limiter (${cnt}) [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
-                    sh.zAxisDescr = "Maximum IQ (mg)";
-                    sh.yAxisDescr = "Engine speed (rpm)";
-                    sh.correction = 0.01;
+                    sh.xAxisCorrection = 0.1;
+                    sh.xAxisOffset = -273.1;
+                    sh.zAxisDescr = "SOI limit (degrees)";
                     sh.yaxisUnits = "rpm";
+                    sh.xaxisUnits = "°C";
+                } else if (xHi === 0xDC && yHi === 0xC5) {
+                    sh.category = "Detected maps";
+                    sh.subcategory = "Limiters";
+                    sh.varname = `SOI limiter (temperature) [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
+                    sh.correction = 0.023437;
+                    sh.yAxisDescr = "Engine speed (rpm)";
+                    sh.xAxisDescr = "Temperature";
+                    sh.xAxisCorrection = 0.1;
+                    sh.xAxisOffset = -273.1;
+                    sh.zAxisDescr = "SOI limit (degrees)";
+                    sh.yaxisUnits = "rpm";
+                    sh.xaxisUnits = "°C";
+                }
+            }
+
+            // ========== Length 162 (9x9): Start IQ ==========
+            else if (sh.length === 162 && sh.xAxisLength === 9 && sh.yAxisLength === 9) {
+                if (xHi === 0xDD && yHi === 0xC1) this.applyStartIQV(sh, newSymbols, newCodeBlocks);
+                if (xId === 0xEBDA && yHi === 0xC1) this.applyStartIQV(sh, newSymbols, newCodeBlocks);
+            }
+
+            // ========== Length 150 (3x25): Torque limiter ==========
+            else if (sh.length === 150 && sh.xAxisLength === 3 && sh.yAxisLength === 25) {
+                this.applyTorqueLimiterV(sh, newCodeBlocks);
+            }
+
+            // ========== Length 144 (DC/C1): Start IQ ==========
+            else if (sh.length === 144 && xHi === 0xDC && yHi === 0xC1) {
+                this.applyStartIQV(sh, newSymbols, newCodeBlocks);
+            }
+
+            // ========== Length 138 (3x23): Torque limiter ==========
+            else if (sh.length === 138 && sh.xAxisLength === 3 && sh.yAxisLength === 23) {
+                this.applyTorqueLimiterV(sh, newCodeBlocks);
+            }
+
+            // ========== Length 128: MAF correction by temperature / Start IQ ==========
+            else if (sh.length === 128) {
+                if (xHi === 0xDD && yId === 0xC1A0 && this.isValidTemperatureAxis(allBytes, sh, 'Y')) {
+                    this.applyMAFCorrTemp(sh, newSymbols, newCodeBlocks);
+                }
+                if (xHi === 0xDC && yHi === 0xC1 && this.isValidTemperatureAxis(allBytes, sh, 'Y')) {
+                    this.applyMAFCorrTemp(sh, newSymbols, newCodeBlocks);
+                }
+                if (xHi === 0xE0 && yId === 0xC002 && this.isValidTemperatureAxis(allBytes, sh, 'Y')) {
+                    this.applyMAFCorrTemp(sh, newSymbols, newCodeBlocks);
+                }
+                if ((xId & 0xFFF0) === 0xDD70 && yId === 0xC134 && this.isValidTemperatureAxis(allBytes, sh, 'Y')) {
+                    this.applyMAFCorrTemp(sh, newSymbols, newCodeBlocks);
+                }
+                if (xId === 0xEBDA && yId === 0xC1AA && this.isValidTemperatureAxis(allBytes, sh, 'Y')) {
+                    this.applyMAFCorrTemp(sh, newSymbols, newCodeBlocks);
+                }
+                if (xHi === 0xDD && yId === 0xC1A4 && this.isValidTemperatureAxis(allBytes, sh, 'Y')) {
+                    this.applyStartIQV(sh, newSymbols, newCodeBlocks);
+                }
+            }
+
+            // ========== Length 120 (3x20): Torque limiter ==========
+            else if (sh.length === 120 && sh.xAxisLength === 3 && sh.yAxisLength === 20) {
+                this.applyTorqueLimiterV(sh, newCodeBlocks);
+            }
+
+            // ========== Length 114 (3x19): Torque limiter ==========
+            else if (sh.length === 114 && sh.xAxisLength === 3 && sh.yAxisLength === 19) {
+                this.applyTorqueLimiterV(sh, newCodeBlocks);
+            }
+
+            // ========== Length 64 (32x1): MAF linearization ==========
+            else if (sh.length === 64 && sh.xAxisLength === 32 && sh.yAxisLength === 1) {
+                sh.category = "Detected maps";
+                sh.subcategory = "Misc";
+                sh.varname = `MAF linearization [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
+            }
+
+            // ========== Length 38 (19x1, X=0xE08A): Torque limiter ==========
+            else if (sh.length === 38 && sh.xAxisLength === 19 && sh.yAxisLength === 1 && xId === 0xE08A) {
+                this.applyTorqueLimiterV(sh, newCodeBlocks);
+            }
+
+            // ========== Length 26 (13x1, X=0xD904): MAF linearization ==========
+            else if (sh.length === 26 && sh.xAxisLength === 13 && sh.yAxisLength === 1 && xId === 0xD904) {
+                sh.category = "Detected maps";
+                sh.subcategory = "Misc";
+                sh.varname = `MAF linearization [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
+            }
+
+            // ========== Length 4 (2x1): MAP linearization / Idle RPM ==========
+            else if (sh.length === 4 && sh.xAxisLength === 2 && sh.yAxisLength === 1) {
+                if (xId === 0xDCD4 || xId === 0xDD28) {
+                    sh.category = "Detected maps";
+                    sh.subcategory = "Misc";
+                    sh.varname = `MAP linearization [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
+                } else if (xHi === 0xC1 && this.isValidTemperatureAxis(allBytes, sh, 'X')) {
+                    sh.category = "Detected maps";
+                    sh.subcategory = "Misc";
+                    const cnt = this.getMapNameCountForCodeBlock("Idle RPM", sh.codeBlock, newSymbols);
+                    sh.varname = `Idle RPM (${cnt}) [${this.determineCodeBlockDescription(sh.flashStartAddress, newCodeBlocks)}]`;
+                    sh.yAxisDescr = "Coolant temperature";
+                    sh.yAxisCorrection = 0.1;
+                    sh.yAxisOffset = -273.1;
+                    sh.zAxisDescr = "Target engine speed";
+                    sh.yaxisUnits = "°C";
                 }
             }
         }

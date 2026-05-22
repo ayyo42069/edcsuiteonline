@@ -189,20 +189,18 @@ export const useFileStore = create<FileState>((set, get) => ({
         const factor = symbol.correction || 1;
         const offsetVal = symbol.offset || 0;
 
-        let rawValue = Math.round((newValue - offsetVal) / factor);
+        const rawSigned = Math.round((newValue - offsetVal) / factor);
 
-        // Clamp based on bit depth (unsigned)
         if (actualElementSize === 1) {
-            if (rawValue < 0) rawValue = 0;
-            if (rawValue > 255) rawValue = 255;
-            data[offset] = rawValue;
+            let v = rawSigned;
+            if (v < 0) v = 0;
+            if (v > 255) v = 255;
+            data[offset] = v;
         } else {
-            if (rawValue < 0) rawValue = 0;
-            if (rawValue > 65535) rawValue = 65535;
-
+            const enc = Tools.rawFromSigned16(rawSigned);
             // Write 16-bit (Little Endian / LoHi)
-            data[offset] = rawValue & 0xFF;
-            data[offset + 1] = (rawValue >> 8) & 0xFF;
+            data[offset] = enc & 0xFF;
+            data[offset + 1] = (enc >> 8) & 0xFF;
         }
 
         // Clone the buffer to trigger React update
@@ -222,32 +220,32 @@ export const useFileStore = create<FileState>((set, get) => ({
         const factor = symbol.correction || 1;
         const offsetVal = symbol.offset || 0;
 
-        // Helper to read current value
+        // Helper to read current value (signed-aware for 16-bit cells)
         const readValue = (x: number, y: number): number => {
             const flatIndex = y * displayCols + x;
             const offset = symbol.flashStartAddress + (flatIndex * actualElementSize);
             let raw = 0;
             if (actualElementSize === 2) {
-                raw = data[offset] | (data[offset + 1] << 8);
+                raw = Tools.signedFromRaw16(data[offset] | (data[offset + 1] << 8));
             } else {
                 raw = data[offset];
             }
             return raw * factor + offsetVal;
         };
 
-        // Helper to write value
+        // Helper to write value (signed-aware encoding for 16-bit cells)
         const writeValue = (x: number, y: number, newDisplayValue: number) => {
             const flatIndex = y * displayCols + x;
             const offset = symbol.flashStartAddress + (flatIndex * actualElementSize);
-            let rawValue = Math.round((newDisplayValue - offsetVal) / factor);
+            const rawSigned = Math.round((newDisplayValue - offsetVal) / factor);
 
             if (actualElementSize === 1) {
-                rawValue = Math.max(0, Math.min(255, rawValue));
-                data[offset] = rawValue;
+                const v = Math.max(0, Math.min(255, rawSigned));
+                data[offset] = v;
             } else {
-                rawValue = Math.max(0, Math.min(65535, rawValue));
-                data[offset] = rawValue & 0xFF;
-                data[offset + 1] = (rawValue >> 8) & 0xFF;
+                const enc = Tools.rawFromSigned16(rawSigned);
+                data[offset] = enc & 0xFF;
+                data[offset + 1] = (enc >> 8) & 0xFF;
             }
         };
 
