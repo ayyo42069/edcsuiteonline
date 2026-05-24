@@ -2,6 +2,11 @@ import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { useFileStore } from '../store/useFileStore';
 import { Folder, FileText, Map as MapIcon, Layers, AlertTriangle, ChevronRight, ChevronDown, Zap, Gauge, Settings, Disc, Rows3, Rows4 } from 'lucide-react';
 import { SymbolHelper } from '../core/types';
+import { Splitter } from './Splitter';
+
+const SIDEBAR_MIN = 200;
+const SIDEBAR_MAX = 640;
+const SIDEBAR_DEFAULT = 280;
 
 // Sub-component for a collapsible section
 const CollapsibleSection: React.FC<{
@@ -48,6 +53,9 @@ export const MapList: React.FC<MapListProps> = ({ isOpen, onToggle }) => {
     const selectSymbol = useFileStore((state) => state.selectSymbol);
     const [searchTerm, setSearchTerm] = useState("");
     const [isCompact, setIsCompact] = useState(false);
+    // Sidebar width is user-resizable (drag the right edge). Persisted across reloads
+    // by the Splitter via localStorage.
+    const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT);
     const searchInputRef = useRef<HTMLInputElement>(null);
     const selectedItemRef = useRef<HTMLDivElement>(null);
 
@@ -176,12 +184,18 @@ export const MapList: React.FC<MapListProps> = ({ isOpen, onToggle }) => {
         </button>
     );
 
+    // Width is animated when collapsed/expanded but applied via inline style so
+    // the user-resized value (Splitter) can also drive it.
+    const widthStyle: React.CSSProperties = isOpen
+        ? { width: sidebarWidth, transition: 'width 200ms ease-out' }
+        : { width: 0, transition: 'width 200ms ease-out' };
+
     if (symbols.length === 0) {
         return (
-            <div className="relative flex-shrink-0">
+            <div className="relative flex-shrink-0 flex" style={widthStyle}>
                 <div
-                    className={`h-full flex flex-col items-center justify-center text-zinc-500 p-6 border-r border-zinc-800 bg-zinc-900 transition-all duration-300 ease-out ${isOpen ? 'w-80 opacity-100' : 'w-0 opacity-0 overflow-hidden'
-                        }`}
+                    className={`h-full flex flex-col items-center justify-center text-zinc-500 p-6 border-r border-zinc-800 bg-zinc-900 overflow-hidden ${isOpen ? 'opacity-100' : 'opacity-0'}`}
+                    style={{ width: isOpen ? sidebarWidth : 0 }}
                 >
                     <Layers className="w-12 h-12 mb-4 opacity-20" />
                     <p className="text-sm text-center whitespace-nowrap">No maps loaded.</p>
@@ -192,10 +206,10 @@ export const MapList: React.FC<MapListProps> = ({ isOpen, onToggle }) => {
     }
 
     return (
-        <div className="relative flex-shrink-0">
+        <div className="relative flex-shrink-0 flex" style={widthStyle}>
             <div
-                className={`h-full flex flex-col border-r border-zinc-800 bg-zinc-950 text-zinc-300 select-none transition-all duration-300 ease-out ${isOpen ? 'w-80 opacity-100' : 'w-0 opacity-0 overflow-hidden'
-                    }`}
+                className={`h-full flex flex-col border-r border-zinc-800 bg-zinc-950 text-zinc-300 select-none overflow-hidden ${isOpen ? 'opacity-100' : 'opacity-0'}`}
+                style={{ width: isOpen ? sidebarWidth : 0 }}
             >
                 {/* Header */}
                 <div className="flex-shrink-0 px-3 py-3 border-b border-zinc-800 bg-zinc-900 sticky top-0 z-10 shadow-sm">
@@ -269,6 +283,20 @@ export const MapList: React.FC<MapListProps> = ({ isOpen, onToggle }) => {
 
                 </div>
             </div>
+
+            {/* Width-resize handle — only shown when sidebar is open. */}
+            {isOpen && (
+                <Splitter
+                    orientation="vertical"
+                    target="before"
+                    initialSize={sidebarWidth}
+                    minSize={SIDEBAR_MIN}
+                    maxSize={SIDEBAR_MAX}
+                    onResize={setSidebarWidth}
+                    storageKey="edc.sidebarWidth"
+                />
+            )}
+
             <ToggleButton />
         </div>
     );

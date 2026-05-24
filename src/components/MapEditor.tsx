@@ -167,7 +167,11 @@ export const MapEditor: React.FC<MapEditorProps> = ({
 
     const commitEdit = useCallback((moveDx = 0, moveDy = 0) => {
         if (!editCell) return;
-        const num = parseFloat(editCell.value);
+        // Read the value straight from the DOM input — the input is uncontrolled
+        // (defaultValue + ref) so React never re-rendered between keystrokes and
+        // there's no chance of the cursor being reset by a controlled-input update.
+        const raw = inputRef.current?.value ?? editCell.value;
+        const num = parseFloat(raw);
         if (!isNaN(num)) updateMapData(symbol, editCell.x, editCell.y, num);
         setEditCell(null);
         if (moveDx !== 0 || moveDy !== 0) {
@@ -181,10 +185,11 @@ export const MapEditor: React.FC<MapEditorProps> = ({
 
     const cancelEdit = useCallback(() => setEditCell(null), []);
 
-    // Focus the input when edit starts. Done after render so the cell is in the DOM.
-    // - Type-to-edit (prefillFromType): cursor at end, no selection, so the next
-    //   keystroke appends instead of replacing the just-typed character.
-    // - F2 / Enter / double-click: select all so a fresh value can be typed in one go.
+    // Focus the freshly-mounted input. The input is UNCONTROLLED (defaultValue,
+    // not value), so React never writes back to it after this mount. That means
+    // every keystroke is handled purely by the browser — no cursor-reset bug.
+    // - Type-to-edit: cursor goes to the end of the prefilled character.
+    // - F2 / double-click: existing value is fully selected for one-shot overwrite.
     useEffect(() => {
         const input = inputRef.current;
         if (!editCell || !input) return;
@@ -195,7 +200,10 @@ export const MapEditor: React.FC<MapEditorProps> = ({
         } else {
             input.select();
         }
-    }, [editCell]);
+    // Only the cell address (and prefill mode) matters — once mounted, the user
+    // owns the input's value. Re-running this on every keystroke would re-position
+    // the cursor and break typing.
+    }, [editCell?.x, editCell?.y, editCell?.prefillFromType]);
 
     // Scroll the active cell into view when it moves via keyboard.
     useEffect(() => {
@@ -538,9 +546,10 @@ export const MapEditor: React.FC<MapEditorProps> = ({
     }
 
     const hasSelection = selectedCells.size > 0 && !editCell;
-    const cellPad = dense ? 'py-1.5 px-1' : 'py-2 px-1.5';
-    const minColWidth = dense ? 'min-w-[60px]' : 'min-w-[70px]';
-    const fontSize = dense ? 'text-xs' : 'text-[13px]';
+    // Tighter cells in dense (inline) mode so more data fits on small screens.
+    const cellPad = dense ? 'py-1 px-1' : 'py-1.5 px-1.5';
+    const minColWidth = dense ? 'min-w-[52px]' : 'min-w-[64px]';
+    const fontSize = dense ? 'text-[11px]' : 'text-[12px]';
 
     return (
         <div
@@ -564,12 +573,20 @@ export const MapEditor: React.FC<MapEditorProps> = ({
                 />
             )}
 
-            {/* Data grid */}
+            {/* Data grid.
+                Sticky-header layering:
+                  - Top-left corner: z-50 (must be above both row and column headers)
+                  - Column headers (thead): z-40 (above row headers when both stick)
+                  - Row headers (Y axis): z-30 (above any cell decoration)
+                  - Selected cell ring: z-10 (just above neighbour cells)
+                  - Active cell outline: z-20 (above selection ring but below sticky headers)
+                Bumping the headers above 20 was needed so a selection ring on an
+                edge cell can't visually leak over the X / Y label column. */}
             <div className="flex-1 overflow-auto relative custom-scrollbar">
                 <table className="w-max border-separate border-spacing-0">
-                    <thead className="sticky top-0 z-20 shadow-sm">
+                    <thead className="sticky top-0 z-40 shadow-sm">
                         <tr>
-                            <th className={`sticky left-0 z-30 ${cellPad} ${minColWidth} bg-zinc-900 border-r border-b border-zinc-800 text-zinc-500 font-normal text-[10px] uppercase tracking-wider`}>
+                            <th className={`sticky left-0 z-50 ${cellPad} ${minColWidth} bg-zinc-900 border-r border-b border-zinc-800 text-zinc-500 font-normal text-[10px] uppercase tracking-wider`}>
                                 <div className="flex items-center justify-between gap-1">
                                     <span className="text-green-500/70">Y</span>
                                     <span className="text-zinc-700">/</span>
@@ -589,7 +606,7 @@ export const MapEditor: React.FC<MapEditorProps> = ({
                     <tbody>
                         {y.map((yVal, yIdx) => (
                             <tr key={`y-${yIdx}`} className="group">
-                                <th className={`sticky left-0 z-10 ${cellPad} bg-zinc-900 border-r border-b border-zinc-800 text-green-300 font-medium ${yIdx === activeCell.y ? 'bg-green-950/40' : 'group-hover:bg-zinc-800'} transition-colors`}>
+                                <th className={`sticky left-0 z-30 ${cellPad} bg-zinc-900 border-r border-b border-zinc-800 text-green-300 font-medium ${yIdx === activeCell.y ? 'bg-green-950/40' : 'group-hover:bg-zinc-800'} transition-colors`}>
                                     {formatValue(yVal, symbol.yAxisCorrection, symbol.yAxisOffset)}
                                 </th>
 
@@ -629,12 +646,18 @@ export const MapEditor: React.FC<MapEditorProps> = ({
                                         >
                                             {isEditing ? (
                                                 <input
+                                                    /* key forces a fresh mount per cell so defaultValue refreshes.
+                                                       Uncontrolled (defaultValue, no value/onChange) — the browser
+                                                       fully owns the input between mount and commit. This is the
+                                                       definitive fix for the "only one digit accepted" bug. */
+                                                    key={`${editCell!.x},${editCell!.y}`}
                                                     ref={inputRef}
                                                     type="text"
                                                     inputMode="decimal"
+                                                    autoComplete="off"
+                                                    spellCheck={false}
                                                     className="absolute inset-0 w-full h-full bg-zinc-800 text-zinc-100 text-center outline-none border-2 border-amber-400 font-mono"
-                                                    value={editCell!.value}
-                                                    onChange={(e) => setEditCell(prev => prev ? { ...prev, value: e.target.value } : prev)}
+                                                    defaultValue={editCell!.value}
                                                     onBlur={() => commitEdit()}
                                                     onKeyDown={handleEditKeyDown}
                                                 />
@@ -654,18 +677,17 @@ export const MapEditor: React.FC<MapEditorProps> = ({
                 </table>
             </div>
 
-            {/* Hint bar */}
-            <div className="flex-shrink-0 px-3 py-1.5 bg-zinc-900/60 border-t border-zinc-800 flex justify-between items-center text-[10px] text-zinc-500">
-                <span className="flex items-center gap-3 flex-wrap">
+            {/* Hint bar — collapses on small screens; only essential info stays. */}
+            <div className="flex-shrink-0 px-2 py-0.5 bg-zinc-900/60 border-t border-zinc-800 flex justify-between items-center gap-2 text-[10px] text-zinc-500">
+                <span className="hidden md:flex items-center gap-2 flex-wrap min-w-0">
                     <span><kbd className="px-1 rounded bg-zinc-800 border border-zinc-700">↑↓←→</kbd> move</span>
-                    <span><kbd className="px-1 rounded bg-zinc-800 border border-zinc-700">Shift</kbd>+arrows: extend</span>
-                    <span><kbd className="px-1 rounded bg-zinc-800 border border-zinc-700">Enter</kbd>/<kbd className="px-1 rounded bg-zinc-800 border border-zinc-700">F2</kbd> edit</span>
+                    <span><kbd className="px-1 rounded bg-zinc-800 border border-zinc-700">F2</kbd> edit</span>
                     <span>type to overwrite</span>
                     <span><kbd className="px-1 rounded bg-zinc-800 border border-zinc-700">Ctrl+Z</kbd> undo</span>
-                    <span><kbd className="px-1 rounded bg-zinc-800 border border-zinc-700">Ctrl+C</kbd>/<kbd className="px-1 rounded bg-zinc-800 border border-zinc-700">V</kbd> copy/paste</span>
+                    <span><kbd className="px-1 rounded bg-zinc-800 border border-zinc-700">Ctrl+C/V</kbd> copy/paste</span>
                 </span>
-                <span className="font-mono">
-                    cell [{activeCell.x}, {activeCell.y}] · factor {symbol.correction} · offset {symbol.offset}
+                <span className="font-mono ml-auto whitespace-nowrap">
+                    [{activeCell.x},{activeCell.y}]
                 </span>
             </div>
         </div>

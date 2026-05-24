@@ -8,6 +8,7 @@ import { MapChart } from "@/src/components/MapChart";
 import { HexViewer } from "@/src/components/HexViewer";
 import { ChecksumModal } from "@/src/components/ChecksumModal";
 import { PopoutView } from "@/src/components/PopoutView";
+import { Splitter } from "@/src/components/Splitter";
 import { setupAsOpener } from "@/src/utils/popoutSync";
 import {
     supportsLaunchControl,
@@ -69,6 +70,10 @@ function MainApp() {
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const [isMapListOpen, setIsMapListOpen] = useState(true);
     const [launchControlMessage, setLaunchControlMessage] = useState<string | null>(null);
+    // Chart pane height — user-resizable via the splitter between chart and grid.
+    // Persisted by the Splitter via localStorage.
+    const [chartHeight, setChartHeight] = useState<number>(260);
+    const [isChartCollapsed, setIsChartCollapsed] = useState(false);
     const menuRef = useRef<HTMLDivElement>(null);
 
     // Open the cross-window sync channel as the opener. Popouts created via
@@ -155,12 +160,12 @@ function MainApp() {
                 <MapList isOpen={isMapListOpen} onToggle={() => setIsMapListOpen(!isMapListOpen)} />
             )}
 
-            <div className="flex-1 flex flex-col overflow-hidden">
-                {/* Header */}
-                <header className="flex-shrink-0 p-4 border-b border-zinc-200 dark:border-zinc-700 flex justify-between items-center bg-white dark:bg-zinc-900">
-                    <div className="flex items-center gap-4">
-                        <h1 className="text-xl font-bold tracking-tight text-blue-600 dark:text-blue-400">
-                            EDC Suite <span className="text-sm font-normal text-zinc-500 ml-2">Beta v0.5</span>
+            <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+                {/* Header — tighter padding to recover vertical space, particularly on phones. */}
+                <header className="flex-shrink-0 px-3 py-2 border-b border-zinc-200 dark:border-zinc-700 flex justify-between items-center bg-white dark:bg-zinc-900 gap-2">
+                    <div className="flex items-center gap-3 min-w-0">
+                        <h1 className="text-base sm:text-lg font-bold tracking-tight text-blue-600 dark:text-blue-400 whitespace-nowrap">
+                            EDC Suite <span className="hidden sm:inline text-[11px] font-normal text-zinc-500 ml-1">v0.5</span>
                         </h1>
 
                         {fileBuffer && (
@@ -342,10 +347,44 @@ function MainApp() {
 
                             {selectedSymbol && (
                                 <div className="flex flex-col h-full">
-                                    <div className="h-72 border-b border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 flex-shrink-0">
-                                        <MapChart symbol={selectedSymbol} fileBuffer={fileBuffer} />
-                                    </div>
-                                    <div className="flex-1 overflow-hidden">
+                                    {/* Chart pane (collapsible + resizable). When collapsed the user
+                                        gets all the height for the table — handy on phones. */}
+                                    {!isChartCollapsed && (
+                                        <>
+                                            <div
+                                                className="border-b border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 flex-shrink-0 relative"
+                                                style={{ height: chartHeight }}
+                                            >
+                                                <MapChart symbol={selectedSymbol} fileBuffer={fileBuffer} />
+                                                <button
+                                                    onClick={() => setIsChartCollapsed(true)}
+                                                    className="absolute top-1 right-1 text-[10px] px-1.5 py-0.5 rounded bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 z-10"
+                                                    title="Hide chart (more room for the grid)"
+                                                >
+                                                    Hide
+                                                </button>
+                                            </div>
+                                            <Splitter
+                                                orientation="horizontal"
+                                                target="before"
+                                                initialSize={chartHeight}
+                                                minSize={120}
+                                                maxSize={600}
+                                                onResize={setChartHeight}
+                                                storageKey="edc.chartHeight"
+                                            />
+                                        </>
+                                    )}
+                                    {isChartCollapsed && (
+                                        <button
+                                            onClick={() => setIsChartCollapsed(false)}
+                                            className="flex-shrink-0 px-3 py-1 bg-zinc-900 border-b border-zinc-800 text-[11px] text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 text-left"
+                                            title="Show chart"
+                                        >
+                                            ▸ Show chart
+                                        </button>
+                                    )}
+                                    <div className="flex-1 overflow-hidden min-h-0">
                                         <MapTable symbol={selectedSymbol} fileBuffer={fileBuffer} />
                                     </div>
                                 </div>

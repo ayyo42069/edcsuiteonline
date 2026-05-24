@@ -25,7 +25,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: "EDC Suite - VAG ECU Tuning Tool",
     description: "Free online EDC15P/EDC16 map editor and tuning suite for VAG diesel ECUs.",
-    url: "https://edc.kristof.best",
+    url: "https://edc.krstoff.com",
     siteName: "EDC Suite",
     type: "website",
   },

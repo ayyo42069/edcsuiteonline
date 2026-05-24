@@ -8,6 +8,6 @@ The project currently has a limited set of mappacks compared to paid online vers
 
 ### ⚡ Credits
 * **Original Logic:** Derived from [VAGEDCSuite](https://github.com/Blackfrosch/VAGEDCSuite) by Blackfrosch.
-* **Web Rewrite:** Major refactoring and web implementation by [Kristof](https://kristof.best).
+* **Web Rewrite:** Major refactoring and web implementation by [Kristof](https://krstoff.com).
 
 > **Disclaimer:** Use at your own risk. Always checksum files before flashing.
