@@ -26,6 +26,11 @@ export default function Home() {
     const selectedSymbol = useFileStore((state) => state.selectedSymbol);
     const fileBuffer = useFileStore((state) => state.fileBuffer);
     const checksumStatus = useFileStore((state) => state.checksumStatus);
+    const undoStack = useFileStore((state) => state.undoStack);
+    const redoStack = useFileStore((state) => state.redoStack);
+    const isDirty = useFileStore((state) => state.isDirty);
+    const undo = useFileStore((state) => state.undo);
+    const redo = useFileStore((state) => state.redo);
 
     const [viewMode, setViewMode] = useState<ViewMode>('map');
     const [isChecksumModalOpen, setIsChecksumModalOpen] = useState(false);
@@ -221,9 +226,46 @@ export default function Home() {
                     </div>
                     <div className="flex items-center gap-3">
                         {fileBuffer && (
-                            <span className="text-xs px-2 py-1 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 font-mono">
-                                {fileType}
-                            </span>
+                            <>
+                                {/* Undo / Redo */}
+                                <div className="flex items-center bg-zinc-100 dark:bg-zinc-800 rounded-lg border border-zinc-200 dark:border-zinc-700 overflow-hidden">
+                                    <button
+                                        onClick={() => undo()}
+                                        disabled={undoStack.length === 0}
+                                        className="px-2 py-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 disabled:opacity-30 disabled:hover:bg-transparent transition-colors flex items-center gap-1"
+                                        title={`Undo (Ctrl+Z) — ${undoStack.length} step${undoStack.length === 1 ? '' : 's'} available`}
+                                    >
+                                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                                        </svg>
+                                        <span className="hidden sm:inline">Undo</span>
+                                    </button>
+                                    <div className="w-px h-5 bg-zinc-200 dark:bg-zinc-700" />
+                                    <button
+                                        onClick={() => redo()}
+                                        disabled={redoStack.length === 0}
+                                        className="px-2 py-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 disabled:opacity-30 disabled:hover:bg-transparent transition-colors flex items-center gap-1"
+                                        title={`Redo (Ctrl+Shift+Z or Ctrl+Y) — ${redoStack.length} step${redoStack.length === 1 ? '' : 's'} available`}
+                                    >
+                                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 10H11a8 8 0 00-8 8v2m18-10l-6 6m6-6l-6-6" />
+                                        </svg>
+                                        <span className="hidden sm:inline">Redo</span>
+                                    </button>
+                                </div>
+
+                                <span className="text-xs px-2 py-1 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 font-mono">
+                                    {fileType}
+                                </span>
+                                {isDirty && (
+                                    <span
+                                        className="text-xs px-2 py-1 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 font-medium border border-amber-500/20"
+                                        title="File has unsaved edits. Use Download Modified to export."
+                                    >
+                                        Modified
+                                    </span>
+                                )}
+                            </>
                         )}
                         <div className="text-sm font-mono text-zinc-500">{fileName}</div>
                     </div>

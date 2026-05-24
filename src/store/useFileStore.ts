@@ -9,6 +9,10 @@ import { EDC16FileParser } from '../core/parsers/EDC16FileParser';
 import { EDC15P_checksum, ChecksumResult } from '../core/checksum/EDC15P_checksum';
 import { Tools } from '../core/tools';
 
+// Maximum number of undo snapshots we keep in memory. Each snapshot is a full
+// ArrayBuffer clone, so 50 × 512KB ≈ 25MB worst case — acceptable for editing.
+const UNDO_LIMIT = 50;
+
 interface FileState {
     fileBuffer: ArrayBuffer | null;
     fileName: string;
@@ -24,6 +28,11 @@ interface FileState {
     checksumFixedCount: number;
     checksumMatchCount: number;
 
+    // Undo/Redo
+    undoStack: ArrayBuffer[];
+    redoStack: ArrayBuffer[];
+    isDirty: boolean;
+
     loadResult: (buffer: ArrayBuffer, name: string) => void;
     reset: () => void;
     selectSymbol: (symbol: SymbolHelper | null) => void;
@@ -34,8 +43,15 @@ interface FileState {
         operation: 'set' | 'add' | 'multiply' | 'addPercent',
         value: number
     ) => void;
+    // Write arbitrary precomputed display values to cells (used by smooth / interpolate / paste).
+    writeMapCells: (
+        symbol: SymbolHelper,
+        cells: Array<{ x: number, y: number, value: number }>
+    ) => void;
     verifyChecksums: () => void;
     addLaunchControlSymbols: (modifiedBuffer: ArrayBuffer, locations: number[]) => void;
+    undo: () => void;
+    redo: () => void;
 }
 
 export const useFileStore = create<FileState>((set, get) => ({
@@ -51,6 +67,10 @@ export const useFileStore = create<FileState>((set, get) => ({
     checksumStatus: null,
     checksumFixedCount: 0,
     checksumMatchCount: 0,
+
+    undoStack: [],
+    redoStack: [],
+    isDirty: false,
 
     loadResult: (buffer: ArrayBuffer, name: string) => {
         set({ isParsing: true });
@@ -139,7 +159,10 @@ export const useFileStore = create<FileState>((set, get) => ({
                     selectedSymbol: null,
                     checksumStatus: null,
                     checksumFixedCount: 0,
-                    checksumMatchCount: 0
+                    checksumMatchCount: 0,
+                    undoStack: [],
+                    redoStack: [],
+                    isDirty: false
                 });
             } catch (e) {
                 console.error("Parsing failed", e);
@@ -159,14 +182,22 @@ export const useFileStore = create<FileState>((set, get) => ({
         selectedSymbol: null,
         checksumStatus: null,
         checksumFixedCount: 0,
-        checksumMatchCount: 0
+        checksumMatchCount: 0,
+        undoStack: [],
+        redoStack: [],
+        isDirty: false
     }),
 
     selectSymbol: (symbol) => set({ selectedSymbol: symbol }),
 
     updateMapData: (symbol, xIndex, yIndex, newValue) => {
-        const { fileBuffer } = get();
+        const { fileBuffer, undoStack } = get();
         if (!fileBuffer) return;
+
+        // Snapshot the current buffer for undo before mutating.
+        const snapshot = fileBuffer.slice(0);
+        const newUndoStack = [...undoStack, snapshot];
+        if (newUndoStack.length > UNDO_LIMIT) newUndoStack.shift();
 
         const data = new Uint8Array(fileBuffer);
 
@@ -204,12 +235,22 @@ export const useFileStore = create<FileState>((set, get) => ({
         }
 
         // Clone the buffer to trigger React update
-        set({ fileBuffer: data.buffer.slice(0), checksumStatus: "Modified (Unverified)" });
+        set({
+            fileBuffer: data.buffer.slice(0),
+            checksumStatus: "Modified (Unverified)",
+            undoStack: newUndoStack,
+            redoStack: [],
+            isDirty: true
+        });
     },
 
     updateMapDataBatch: (symbol, cells, operation, value) => {
-        const { fileBuffer } = get();
+        const { fileBuffer, undoStack } = get();
         if (!fileBuffer || cells.length === 0) return;
+
+        const snapshot = fileBuffer.slice(0);
+        const newUndoStack = [...undoStack, snapshot];
+        if (newUndoStack.length > UNDO_LIMIT) newUndoStack.shift();
 
         const data = new Uint8Array(fileBuffer);
         const displayCols = symbol.yAxisLength;
@@ -274,7 +315,78 @@ export const useFileStore = create<FileState>((set, get) => ({
             writeValue(cell.x, cell.y, newValue);
         }
 
-        set({ fileBuffer: data.buffer.slice(0), checksumStatus: "Modified (Unverified)" });
+        set({
+            fileBuffer: data.buffer.slice(0),
+            checksumStatus: "Modified (Unverified)",
+            undoStack: newUndoStack,
+            redoStack: [],
+            isDirty: true
+        });
+    },
+
+    writeMapCells: (symbol, cells) => {
+        const { fileBuffer, undoStack } = get();
+        if (!fileBuffer || cells.length === 0) return;
+
+        const snapshot = fileBuffer.slice(0);
+        const newUndoStack = [...undoStack, snapshot];
+        if (newUndoStack.length > UNDO_LIMIT) newUndoStack.shift();
+
+        const data = new Uint8Array(fileBuffer);
+        const displayCols = symbol.yAxisLength;
+        const totalElements = symbol.xAxisLength * symbol.yAxisLength;
+        const elementSize = Math.floor(symbol.length / totalElements);
+        const actualElementSize = (elementSize === 1 || elementSize === 2) ? elementSize : 2;
+        const factor = symbol.correction || 1;
+        const offsetVal = symbol.offset || 0;
+
+        for (const { x, y, value } of cells) {
+            const flatIndex = y * displayCols + x;
+            const offset = symbol.flashStartAddress + (flatIndex * actualElementSize);
+            const rawSigned = Math.round((value - offsetVal) / factor);
+            if (actualElementSize === 1) {
+                const v = Math.max(0, Math.min(255, rawSigned));
+                data[offset] = v;
+            } else {
+                const enc = Tools.rawFromSigned16(rawSigned);
+                data[offset] = enc & 0xFF;
+                data[offset + 1] = (enc >> 8) & 0xFF;
+            }
+        }
+
+        set({
+            fileBuffer: data.buffer.slice(0),
+            checksumStatus: "Modified (Unverified)",
+            undoStack: newUndoStack,
+            redoStack: [],
+            isDirty: true
+        });
+    },
+
+    undo: () => {
+        const { fileBuffer, undoStack, redoStack } = get();
+        if (!fileBuffer || undoStack.length === 0) return;
+        const previous = undoStack[undoStack.length - 1];
+        const newRedo = [...redoStack, fileBuffer.slice(0)];
+        set({
+            fileBuffer: previous,
+            undoStack: undoStack.slice(0, -1),
+            redoStack: newRedo,
+            checksumStatus: "Modified (Unverified)"
+        });
+    },
+
+    redo: () => {
+        const { fileBuffer, undoStack, redoStack } = get();
+        if (!fileBuffer || redoStack.length === 0) return;
+        const next = redoStack[redoStack.length - 1];
+        const newUndo = [...undoStack, fileBuffer.slice(0)];
+        set({
+            fileBuffer: next,
+            redoStack: redoStack.slice(0, -1),
+            undoStack: newUndo,
+            checksumStatus: "Modified (Unverified)"
+        });
     },
 
     verifyChecksums: () => {

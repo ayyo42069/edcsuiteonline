@@ -1,6 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { useFileStore } from '../store/useFileStore';
-import { Folder, FileText, Map as MapIcon, Layers, AlertTriangle, ChevronRight, ChevronDown, Zap, Gauge, Settings, Disc } from 'lucide-react';
+import { Folder, FileText, Map as MapIcon, Layers, AlertTriangle, ChevronRight, ChevronDown, Zap, Gauge, Settings, Disc, Rows3, Rows4 } from 'lucide-react';
 import { SymbolHelper } from '../core/types';
 
 // Sub-component for a collapsible section
@@ -47,6 +47,31 @@ export const MapList: React.FC<MapListProps> = ({ isOpen, onToggle }) => {
     const selectedSymbol = useFileStore((state) => state.selectedSymbol);
     const selectSymbol = useFileStore((state) => state.selectSymbol);
     const [searchTerm, setSearchTerm] = useState("");
+    const [isCompact, setIsCompact] = useState(false);
+    const searchInputRef = useRef<HTMLInputElement>(null);
+    const selectedItemRef = useRef<HTMLDivElement>(null);
+
+    // "/" focuses the search box from anywhere (unless typing in another field).
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            const t = e.target as HTMLElement | null;
+            const inField = !!(t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable));
+            if (e.key === '/' && !inField && isOpen) {
+                e.preventDefault();
+                searchInputRef.current?.focus();
+                searchInputRef.current?.select();
+            }
+        };
+        document.addEventListener('keydown', onKey);
+        return () => document.removeEventListener('keydown', onKey);
+    }, [isOpen]);
+
+    // Scroll the selected item into view when the symbol changes (e.g. selected via chart click).
+    useEffect(() => {
+        if (selectedSymbol && selectedItemRef.current) {
+            selectedItemRef.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+    }, [selectedSymbol]);
 
     // Process symbols: Group by Category -> Subcategory
     const processedData = useMemo(() => {
@@ -110,14 +135,16 @@ export const MapList: React.FC<MapListProps> = ({ isOpen, onToggle }) => {
         return (
             <div
                 key={map.flashStartAddress}
+                ref={isSelected ? selectedItemRef : null}
                 onClick={() => selectSymbol(map)}
                 className={`
-                group flex items-center gap-3 px-3 py-2 rounded-md cursor-pointer text-sm transition-all duration-150
+                group flex items-center gap-2.5 ${isCompact ? 'px-2 py-1' : 'px-3 py-2'} rounded-md cursor-pointer text-sm transition-all duration-150
                 ${isSelected
                         ? 'bg-blue-600 text-white shadow-md shadow-blue-900/20'
                         : 'text-zinc-400 hover:bg-zinc-900 hover:text-zinc-100'
                     }
             `}
+                title={map.varname}
             >
                 <Icon className={`w-3.5 h-3.5 flex-shrink-0 ${isSelected ? 'text-blue-200' : 'text-zinc-600 group-hover:text-zinc-400'}`} />
 
@@ -125,10 +152,12 @@ export const MapList: React.FC<MapListProps> = ({ isOpen, onToggle }) => {
                     <div className="truncate font-medium leading-tight text-[13px]">
                         {map.varname || `Map @ ${map.flashStartAddress.toString(16).toUpperCase()}`}
                     </div>
-                    <div className={`text-[10px] mt-0.5 flex justify-between font-mono ${isSelected ? 'text-blue-200' : 'text-zinc-600 group-hover:text-zinc-500'}`}>
-                        <span className="opacity-80">{map.flashStartAddress.toString(16).toUpperCase()}</span>
-                        <span>{map.xAxisLength}x{map.yAxisLength}</span>
-                    </div>
+                    {!isCompact && (
+                        <div className={`text-[10px] mt-0.5 flex justify-between font-mono ${isSelected ? 'text-blue-200' : 'text-zinc-600 group-hover:text-zinc-500'}`}>
+                            <span className="opacity-80">{map.flashStartAddress.toString(16).toUpperCase()}</span>
+                            <span>{map.xAxisLength}x{map.yAxisLength}</span>
+                        </div>
+                    )}
                 </div>
             </div>
         );
@@ -175,17 +204,34 @@ export const MapList: React.FC<MapListProps> = ({ isOpen, onToggle }) => {
                             <Layers className="w-4 h-4 text-blue-500" />
                             <span>Map Selector</span>
                         </div>
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400 font-mono border border-zinc-700">
-                            {symbols.length}
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                            <button
+                                onClick={() => setIsCompact(c => !c)}
+                                className="p-1 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
+                                title={isCompact ? "Show details" : "Compact view"}
+                            >
+                                {isCompact ? <Rows4 className="w-3.5 h-3.5" /> : <Rows3 className="w-3.5 h-3.5" />}
+                            </button>
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400 font-mono border border-zinc-700">
+                                {symbols.length}
+                            </span>
+                        </div>
                     </div>
-                    <input
-                        type="text"
-                        placeholder="Search maps..."
-                        className="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-xs text-zinc-200 focus:outline-none focus:border-blue-500/50 transition-colors"
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                    />
+                    <div className="relative">
+                        <input
+                            ref={searchInputRef}
+                            type="text"
+                            placeholder="Search maps…"
+                            className="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 pr-7 text-xs text-zinc-200 focus:outline-none focus:border-blue-500/50 transition-colors"
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                        />
+                        {!searchTerm && (
+                            <kbd className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] px-1 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-500 font-mono">
+                                /
+                            </kbd>
+                        )}
+                    </div>
                 </div>
 
                 {/* Scrollable List */}
