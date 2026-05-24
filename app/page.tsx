@@ -7,6 +7,8 @@ import { MapTable } from "@/src/components/MapTable";
 import { MapChart } from "@/src/components/MapChart";
 import { HexViewer } from "@/src/components/HexViewer";
 import { ChecksumModal } from "@/src/components/ChecksumModal";
+import { PopoutView } from "@/src/components/PopoutView";
+import { setupAsOpener } from "@/src/utils/popoutSync";
 import {
     supportsLaunchControl,
     hasLaunchControlMap,
@@ -16,7 +18,37 @@ import {
 
 type ViewMode = 'map' | 'hex';
 
+// Detect ?popout=<hex> on first client paint. If present, route to PopoutView
+// which renders just the editor for that symbol and syncs via BroadcastChannel
+// with the original window.
+const usePopoutAddress = (): number | null | undefined => {
+    // `undefined` while we haven't checked yet (avoids flashing the main UI in
+    // popouts during the first paint). `null` once we know there's no popout.
+    const [addr, setAddr] = useState<number | null | undefined>(undefined);
+    useEffect(() => {
+        try {
+            const params = new URLSearchParams(window.location.search);
+            const p = params.get('popout');
+            if (p && /^[0-9a-fA-F]+$/.test(p)) setAddr(parseInt(p, 16));
+            else setAddr(null);
+        } catch { setAddr(null); }
+    }, []);
+    return addr;
+};
+
 export default function Home() {
+    const popoutAddr = usePopoutAddress();
+    if (popoutAddr === undefined) {
+        // First client paint — render nothing to avoid main-UI flash inside popouts.
+        return null;
+    }
+    if (popoutAddr !== null) {
+        return <PopoutView address={popoutAddr} />;
+    }
+    return <MainApp />;
+}
+
+function MainApp() {
     const loadResult = useFileStore((state) => state.loadResult);
     const addLaunchControlSymbols = useFileStore((state) => state.addLaunchControlSymbols);
     const symbols = useFileStore((state) => state.symbols);
@@ -38,6 +70,10 @@ export default function Home() {
     const [isMapListOpen, setIsMapListOpen] = useState(true);
     const [launchControlMessage, setLaunchControlMessage] = useState<string | null>(null);
     const menuRef = useRef<HTMLDivElement>(null);
+
+    // Open the cross-window sync channel as the opener. Popouts created via
+    // window.open() will broadcast `hello`; we respond with the current state.
+    useEffect(() => { setupAsOpener(); }, []);
 
     // Close menu when clicking outside
     useEffect(() => {

@@ -19,7 +19,14 @@ interface MapEditorProps {
 }
 
 interface CellCoord { x: number; y: number; }
-interface EditState { x: number; y: number; value: string; }
+// `prefillFromType` distinguishes:
+//   - true:  user started typing a digit on a selected cell. Value starts with that
+//            single character and the input cursor sits AFTER it so subsequent
+//            keystrokes append (typing "54" produces "54", not "4").
+//   - false: F2 / Enter / double-click on the cell. Value is the existing cell
+//            display value with everything selected so the user can overwrite in
+//            one keystroke (standard spreadsheet behaviour).
+interface EditState { x: number; y: number; value: string; prefillFromType: boolean; }
 interface Clipboard {
     width: number;
     height: number;
@@ -152,7 +159,7 @@ export const MapEditor: React.FC<MapEditorProps> = ({
     const beginEditAt = useCallback((cx: number, cy: number, prefilled?: string) => {
         const raw = z[cy]?.[cx] ?? 0;
         const value = prefilled !== undefined ? prefilled : formatValue(raw, symbol.correction, symbol.offset);
-        setEditCell({ x: cx, y: cy, value });
+        setEditCell({ x: cx, y: cy, value, prefillFromType: prefilled !== undefined });
         setActiveCell({ x: cx, y: cy });
         // Don't keep multi-selection visible while editing — keeps focus clear.
         setSelectedCells(new Set([cellKey(cx, cy)]));
@@ -175,10 +182,18 @@ export const MapEditor: React.FC<MapEditorProps> = ({
     const cancelEdit = useCallback(() => setEditCell(null), []);
 
     // Focus the input when edit starts. Done after render so the cell is in the DOM.
+    // - Type-to-edit (prefillFromType): cursor at end, no selection, so the next
+    //   keystroke appends instead of replacing the just-typed character.
+    // - F2 / Enter / double-click: select all so a fresh value can be typed in one go.
     useEffect(() => {
-        if (editCell && inputRef.current) {
-            inputRef.current.focus();
-            inputRef.current.select();
+        const input = inputRef.current;
+        if (!editCell || !input) return;
+        input.focus();
+        if (editCell.prefillFromType) {
+            const end = input.value.length;
+            input.setSelectionRange(end, end);
+        } else {
+            input.select();
         }
     }, [editCell]);
 
@@ -619,7 +634,7 @@ export const MapEditor: React.FC<MapEditorProps> = ({
                                                     inputMode="decimal"
                                                     className="absolute inset-0 w-full h-full bg-zinc-800 text-zinc-100 text-center outline-none border-2 border-amber-400 font-mono"
                                                     value={editCell!.value}
-                                                    onChange={(e) => setEditCell({ ...editCell!, value: e.target.value })}
+                                                    onChange={(e) => setEditCell(prev => prev ? { ...prev, value: e.target.value } : prev)}
                                                     onBlur={() => commitEdit()}
                                                     onKeyDown={handleEditKeyDown}
                                                 />

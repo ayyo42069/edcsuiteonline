@@ -8,6 +8,13 @@ import { EDC15P6FileParser } from '../core/parsers/EDC15P6FileParser';
 import { EDC16FileParser } from '../core/parsers/EDC16FileParser';
 import { EDC15P_checksum, ChecksumResult } from '../core/checksum/EDC15P_checksum';
 import { Tools } from '../core/tools';
+import {
+    broadcastSingleEdit,
+    broadcastBatchEdit,
+    broadcastWriteCells,
+    broadcastBufferReplaced,
+    broadcastSymbolSelected
+} from '../utils/popoutSync';
 
 // Maximum number of undo snapshots we keep in memory. Each snapshot is a full
 // ArrayBuffer clone, so 50 × 512KB ≈ 25MB worst case — acceptable for editing.
@@ -188,7 +195,10 @@ export const useFileStore = create<FileState>((set, get) => ({
         isDirty: false
     }),
 
-    selectSymbol: (symbol) => set({ selectedSymbol: symbol }),
+    selectSymbol: (symbol) => {
+        set({ selectedSymbol: symbol });
+        broadcastSymbolSelected(symbol ? symbol.flashStartAddress : null);
+    },
 
     updateMapData: (symbol, xIndex, yIndex, newValue) => {
         const { fileBuffer, undoStack } = get();
@@ -242,6 +252,7 @@ export const useFileStore = create<FileState>((set, get) => ({
             redoStack: [],
             isDirty: true
         });
+        broadcastSingleEdit(symbol, xIndex, yIndex, newValue);
     },
 
     updateMapDataBatch: (symbol, cells, operation, value) => {
@@ -322,6 +333,7 @@ export const useFileStore = create<FileState>((set, get) => ({
             redoStack: [],
             isDirty: true
         });
+        broadcastBatchEdit(symbol, cells, operation, value);
     },
 
     writeMapCells: (symbol, cells) => {
@@ -361,6 +373,7 @@ export const useFileStore = create<FileState>((set, get) => ({
             redoStack: [],
             isDirty: true
         });
+        broadcastWriteCells(symbol, cells);
     },
 
     undo: () => {
@@ -374,6 +387,9 @@ export const useFileStore = create<FileState>((set, get) => ({
             redoStack: newRedo,
             checksumStatus: "Modified (Unverified)"
         });
+        // Undo replaces the whole buffer; broadcast the full snapshot so other
+        // windows can swap in the same bytes.
+        broadcastBufferReplaced(previous);
     },
 
     redo: () => {
@@ -387,6 +403,7 @@ export const useFileStore = create<FileState>((set, get) => ({
             undoStack: newUndo,
             checksumStatus: "Modified (Unverified)"
         });
+        broadcastBufferReplaced(next);
     },
 
     verifyChecksums: () => {

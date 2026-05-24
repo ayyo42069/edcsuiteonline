@@ -4,7 +4,7 @@ import { Tools } from '../core/tools';
 import { getColorForValue } from '../utils/colorUtils';
 import { LayoutGrid, Activity, Box, ExternalLink } from 'lucide-react';
 import { Map3DViewer } from './Map3DViewer';
-import { MapPopup } from './MapPopup';
+import { openPopoutWindow } from '../utils/popoutSync';
 
 interface MapChartProps {
     symbol: SymbolHelper;
@@ -15,7 +15,6 @@ type ChartMode = 'lines' | 'heatmap' | 'surface';
 
 export const MapChart: React.FC<MapChartProps> = ({ symbol, fileBuffer }) => {
     const [mode, setMode] = useState<ChartMode>('lines');
-    const [isPopupOpen, setIsPopupOpen] = useState(false);
 
     const isPercentMap = useMemo(() => {
         return (symbol.zAxisDescr || "").includes("%") || (symbol.xaxisUnits || "").includes("Duty cycle");
@@ -118,11 +117,13 @@ export const MapChart: React.FC<MapChartProps> = ({ symbol, fileBuffer }) => {
                 </div>
 
                 <div className="flex items-center gap-2">
-                    {/* Pop-out button */}
+                    {/* Pop-out button: opens a new browser window for this map.
+                        The window stays synced with the main app via BroadcastChannel
+                        so users can open several maps at once side by side. */}
                     <button
-                        onClick={() => setIsPopupOpen(true)}
+                        onClick={() => openPopoutWindow(symbol.flashStartAddress)}
                         className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium transition-colors"
-                        title="Open map editor in popup"
+                        title="Open this map in a separate browser window (edits sync live)"
                     >
                         <ExternalLink className="w-3.5 h-3.5" />
                         Pop Out
@@ -188,14 +189,6 @@ export const MapChart: React.FC<MapChartProps> = ({ symbol, fileBuffer }) => {
                     </svg>
                 )}
             </div>
-
-            {/* Map Popup Modal */}
-            <MapPopup
-                symbol={symbol}
-                fileBuffer={fileBuffer}
-                isOpen={isPopupOpen}
-                onClose={() => setIsPopupOpen(false)}
-            />
         </div>
     );
 };
